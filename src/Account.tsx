@@ -1,6 +1,6 @@
 import { MedicalTab, TravelTab } from "@/Logistics"
 import React, { useState, useEffect, useRef } from "react"
-import logo from "@/imports/LOGO_TKSGPIB27__3_.png"
+import logo from "../imports/LOGO_TKSGPIB27__3_.png"
 
 const BC = "'Barlow Condensed', sans-serif"
 const BB = "'Barlow', sans-serif"

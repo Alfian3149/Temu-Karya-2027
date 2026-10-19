@@ -1,0 +1,11 @@
+{
+  "title": "TKS2027PKBGPIB",
+  "description": "Creates interactive web figures for visualizing data or concepts, enabling users to present information clearly and engagingly online.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

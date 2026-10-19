@@ -669,7 +669,7 @@ export function LoginPage({
             alignItems: "flex-start",
           }}
         >
-          <img src="/imports/LOGO_TKSGPIB27__3_.png" alt="Logo TKS 2027 PKB GPIB" style={{ width: 120, height: 120, objectFit: "contain", marginBottom: 32 }} />
+          <img src={logo} alt="Logo TKS 2027 PKB GPIB" style={{ width: 120, height: 120, objectFit: "contain", marginBottom: 32 }} />
           <div style={{ fontFamily: BC, fontWeight: 700, fontSize: 12, letterSpacing: 4, color: "rgba(255,255,255,0.7)", marginBottom: 14 }}>
             PORTAL PESERTA
           </div>

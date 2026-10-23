@@ -4,6 +4,8 @@ import {
   write,
   randomId,
   listUsers,
+  listAllPeserta,
+  listProfiles,
   REG_KEY,
   LOMBA,
   Field,
@@ -37,10 +39,9 @@ type Row = Contingent & { poin: number; menang: number; main: number; perLomba: 
 const listMatches = () => read<Match[]>(MATCH_KEY, [])
 const isFinal = () => read<boolean>(SCORE_FINAL_KEY, false)
 
-export function listContingents(): Contingent[] {
-  const regs = read<Registration[]>(REG_KEY, [])
-  return listUsers()
-    .filter((u) => u.role === "user" && regs.some((r) => r.email === u.email))
+export function contingentsFrom(regs: Registration[], users: { email: string; name: string; role?: string }[]): Contingent[] {
+  return users
+    .filter((u) => (u.role ?? "user") === "user" && regs.some((r) => r.email === u.email))
     .map((u) => {
       const count: Record<string, number> = {}
       regs.filter((r) => r.email === u.email && r.mupel).forEach((r) => (count[r.mupel] = (count[r.mupel] ?? 0) + 1))
@@ -48,6 +49,15 @@ export function listContingents(): Contingent[] {
       return { id: u.email, name: mupel || u.name, leader: u.name }
     })
     .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+export function listContingents(): Contingent[] {
+  return contingentsFrom(read<Registration[]>(REG_KEY, []), listUsers())
+}
+
+export async function loadContingents(): Promise<Contingent[]> {
+  const [regs, users] = await Promise.all([listAllPeserta(), listProfiles()])
+  return contingentsFrom(regs, users)
 }
 
 export function computeStandings(cs: Contingent[], ms: Match[], lomba = ""): Row[] {
@@ -197,11 +207,14 @@ function Board({ cs, ms, final }: { cs: Contingent[]; ms: Match[]; final: boolea
 // ── Public page ────────────────────────────────────────────────────────────────
 export function PublicScoreboard() {
   const snap = location.hash.startsWith(SCORE_SNAP) && location.hash.length > SCORE_SNAP.length
-  const [data, setData] = useState<Snapshot | null>(() => (snap ? null : { c: listContingents(), m: listMatches(), f: isFinal(), t: new Date().toISOString() }))
+  const [data, setData] = useState<Snapshot | null>(() => (snap ? null : { c: [], m: listMatches(), f: isFinal(), t: new Date().toISOString() }))
   const [err, setErr] = useState(false)
   useEffect(() => {
-    if (!snap) return
-    unpackJson<Snapshot>(location.hash.slice(SCORE_SNAP.length)).then((d) => (Array.isArray(d?.c) && Array.isArray(d?.m) ? setData(d) : setErr(true))).catch(() => setErr(true))
+    if (snap) {
+      unpackJson<Snapshot>(location.hash.slice(SCORE_SNAP.length)).then((d) => (Array.isArray(d?.c) && Array.isArray(d?.m) ? setData(d) : setErr(true))).catch(() => setErr(true))
+      return
+    }
+    void loadContingents().then((c) => setData((current) => current ? { ...current, c, t: new Date().toISOString() } : current)).catch(() => undefined)
   }, [snap])
   return (
     <div style={{ minHeight: "100vh", background: "#1a1a1a", padding: "16px 12px 56px" }}>
@@ -317,7 +330,8 @@ export function ScoreAdminTab({ me }: { me: string }) {
   const [form, setForm] = useState<Match | "new" | null>(null)
   const [lomba, setLomba] = useState("")
   const [confirmId, setConfirmId] = useState<string | null>(null)
-  const cs = useMemo(listContingents, [])
+  const [cs, setCs] = useState<Contingent[]>([])
+  useEffect(() => { void loadContingents().then(setCs).catch(() => setCs([])) }, [])
   const names = useMemo(() => new Map(cs.map((c) => [c.id, c.name])), [cs])
   const rows = useMemo(() => computeStandings(cs, ms, lomba), [cs, ms, lomba])
   const reload = () => setMs(listMatches())

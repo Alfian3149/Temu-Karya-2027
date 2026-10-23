@@ -1,6 +1,7 @@
 import { MedicalTab, TravelTab } from "@/Logistics"
-import React, { useState, useEffect, useRef } from "react"
+import React, { useState, useEffect, useRef, useCallback } from "react"
 import logo from "@/imports/LOGO_TKSGPIB27__3_.png"
+import { authTanpaSesi, supabase } from "@/lib/supabase"
 
 const BC = "'Barlow Condensed', sans-serif"
 const BB = "'Barlow', sans-serif"
@@ -23,7 +24,6 @@ export const isStaff = (u?: User | null) => !!u && u.role !== "user"
 export type StoredUser = User & { salt: string; hash: string }
 
 export const USERS_KEY = "tks27_users"
-const SESSION_KEY = "tks27_session"
 export const REG_KEY = "tks27_registrations"
 
 export function read<T>(key: string, fallback: T): T {
@@ -52,14 +52,20 @@ export const randomId = () =>
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("")
 
-const toUser = (u: StoredUser): User => ({ id: u.id, name: u.name, email: u.email, role: u.role ?? "user" })
+export function newUuid() {
+  const bytes = new Uint8Array(16)
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") crypto.getRandomValues(bytes)
+  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256)
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
 
-function loadSession(): User | null {
-  const email =
-    localStorage.getItem(SESSION_KEY) ?? sessionStorage.getItem(SESSION_KEY)
-  if (!email) return null
-  const u = read<StoredUser[]>(USERS_KEY, []).find((x) => x.email === email)
-  return u ? toUser(u) : null
+async function profilToUser(id: string): Promise<User> {
+  const { data, error } = await supabase.from("profil").select("id, nama, email, peran").eq("id", id).single()
+  if (error) throw new Error(error.message)
+  return { id: data.id, name: data.nama, email: data.email, role: data.peran as Role }
 }
 
 export const SEED_ADMIN = { email: "admin@tks2027.id", password: "Admin2027!" }
@@ -85,95 +91,138 @@ seedSuperuser()
 export const listUsers = () => read<StoredUser[]>(USERS_KEY, [])
 
 export async function createAccount(name: string, email: string, password: string, role: Role) {
-  const users = listUsers()
   const mail = email.trim().toLowerCase()
-  if (users.some((u) => u.email === mail)) throw new Error("Email sudah terdaftar.")
-  const salt = randomId()
-  write(USERS_KEY, [
-    ...users,
-    { id: randomId(), name: name.trim(), email: mail, role, salt, hash: await hashPassword(password, salt) },
-  ])
+  const { data: existing, error: existingError } = await supabase.from("profil").select("id").eq("email", mail).maybeSingle()
+  throwIf(existingError)
+  if (existing) throw new Error("Email sudah terdaftar.")
+  const client = authTanpaSesi()
+  const { data, error } = await client.auth.signUp({
+    email: mail,
+    password,
+    options: { data: { nama: name.trim() } },
+  })
+  if (error) {
+    if (/already registered|already exists/i.test(error.message)) throw new Error("Email sudah terdaftar.")
+    throw new Error(error.message)
+  }
+  if (!data.user) throw new Error("Akun dibuat. Periksa email untuk konfirmasi, lalu masuk.")
+  const { data: updated, error: roleError } = await supabase
+    .from("profil")
+    .update({ nama: name.trim(), peran: role })
+    .eq("id", data.user.id)
+    .select("id")
+    .maybeSingle()
+  throwIf(roleError)
+  if (!updated) throw new Error("Akun dibuat, tetapi perannya belum tersimpan. Setelah email dikonfirmasi, atur peran dari daftar akun.")
 }
 
-function guardLastSuperuser(users: StoredUser[], id: string) {
-  const target = users.find((u) => u.id === id)
-  if (target?.role === "superuser" && users.filter((u) => u.role === "superuser").length <= 1)
+async function guardLastSuperuser(id: string) {
+  const { data, error } = await supabase.from("profil").select("id").eq("peran", "superuser")
+  throwIf(error)
+  const supers = data ?? []
+  if (supers.some((row) => row.id === id) && supers.length <= 1)
     throw new Error("Tidak dapat mengubah atau menghapus Superuser terakhir.")
 }
 
-export function setUserRole(id: string, role: Role) {
-  const users = listUsers()
-  if (role !== "superuser") guardLastSuperuser(users, id)
-  write(USERS_KEY, users.map((u) => (u.id === id ? { ...u, role } : u)))
+export async function setUserRole(id: string, role: Role) {
+  if (role !== "superuser") await guardLastSuperuser(id)
+  const { data, error } = await supabase.from("profil").update({ peran: role }).eq("id", id).select("id").maybeSingle()
+  throwIf(error)
+  if (!data) throw new Error("Peran tidak tersimpan. Pastikan Anda masuk sebagai Superuser.")
 }
 
-export function deleteUser(id: string) {
-  const users = listUsers()
-  guardLastSuperuser(users, id)
-  const target = users.find((u) => u.id === id)
-  if (target && read<Registration[]>(REG_KEY, []).some((r) => r.email === target.email))
-    throw new Error("Akun ini memiliki data peserta dan tidak dapat dihapus.")
-  write(USERS_KEY, users.filter((u) => u.id !== id))
+export async function deleteUser(id: string) {
+  const { data: session } = await supabase.auth.getUser()
+  if (session.user?.id === id) throw new Error("Tidak dapat menghapus akun yang sedang digunakan.")
+  await guardLastSuperuser(id)
+  const { count, error: countError } = await supabase.from("peserta").select("id", { count: "exact", head: true }).eq("kontingen_id", id)
+  throwIf(countError)
+  if ((count ?? 0) > 0) throw new Error("Akun ini memiliki data peserta dan tidak dapat dihapus.")
+  const { data, error } = await supabase.from("profil").delete().eq("id", id).select("id").maybeSingle()
+  throwIf(error)
+  if (!data) throw new Error("Akun tidak terhapus. Jalankan skrip supabase/admin-akses.sql di SQL Editor.")
 }
 
 export async function setUserPassword(id: string, password: string) {
-  const users = listUsers()
-  const salt = randomId()
-  const hash = await hashPassword(password, salt)
-  write(USERS_KEY, users.map((u) => (u.id === id ? { ...u, salt, hash } : u)))
+  const { data } = await supabase.auth.getUser()
+  if (data.user?.id === id) {
+    const { error } = await supabase.auth.updateUser({ password })
+    throwIf(error)
+    return "Kata sandi Anda diperbarui."
+  }
+  const { data: profil, error } = await supabase.from("profil").select("email").eq("id", id).maybeSingle()
+  throwIf(error)
+  if (!profil?.email) throw new Error("Akun tidak ditemukan.")
+  const { error: resetError } = await supabase.auth.resetPasswordForEmail(profil.email, { redirectTo: window.location.origin })
+  throwIf(resetError)
+  return `Tautan reset kata sandi dikirim ke ${profil.email}.`
 }
 
 export type Auth = ReturnType<typeof useAuth>
 
 export function useAuth() {
-  const [user, setUser] = useState<User | null>(loadSession)
+  const [user, setUser] = useState<User | null>(null)
 
-  const startSession = (u: StoredUser, remember: boolean) => {
-    localStorage.removeItem(SESSION_KEY)
-    sessionStorage.removeItem(SESSION_KEY)
-    ;(remember ? localStorage : sessionStorage).setItem(SESSION_KEY, u.email)
-    setUser(toUser(u))
-  }
+  useEffect(() => {
+    let live = true
+    const apply = (id?: string) => {
+      if (!id) {
+        setUser(null)
+        return
+      }
+      setTimeout(() => {
+        void profilToUser(id).then((next) => {
+          if (live) setUser(next)
+        })
+      }, 0)
+    }
+    void supabase.auth.getSession().then(({ data }) => {
+      if (live) apply(data.session?.user.id)
+    })
+    const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (live) apply(session?.user.id)
+    })
+    return () => {
+      live = false
+      subscription.subscription.unsubscribe()
+    }
+  }, [])
 
   const signup = async (name: string, email: string, password: string) => {
-    const users = read<StoredUser[]>(USERS_KEY, [])
     const mail = email.trim().toLowerCase()
-    if (users.some((u) => u.email === mail))
-      throw new Error("Email sudah terdaftar. Silakan masuk.")
-    const salt = randomId()
-    const created: StoredUser = {
-      id: randomId(),
-      name: name.trim(),
+    const { data, error } = await supabase.auth.signUp({
       email: mail,
-      role: "user",
-      salt,
-      hash: await hashPassword(password, salt),
+      password,
+      options: { data: { nama: name.trim() } },
+    })
+    if (error) {
+      if (/already registered|already exists/i.test(error.message)) throw new Error("Email sudah terdaftar. Silakan masuk.")
+      throw new Error(error.message)
     }
-    write(USERS_KEY, [...users, created])
-    startSession(created, true)
+    if (!data.session || !data.user) throw new Error("Akun dibuat. Periksa email untuk konfirmasi, lalu masuk.")
+    const { error: profileError } = await supabase.from("profil").update({ nama: name.trim() }).eq("id", data.user.id)
+    if (profileError) throw new Error(profileError.message)
+    setUser(await profilToUser(data.user.id))
   }
 
-  const login = async (email: string, password: string, remember: boolean) => {
-    const mail = email.trim().toLowerCase()
-    const found = read<StoredUser[]>(USERS_KEY, []).find((u) => u.email === mail)
-    const ok = found && (await hashPassword(password, found.salt)) === found.hash
-    if (!found || !ok) throw new Error("Email atau kata sandi salah.")
-    startSession(found, remember)
+  const login = async (email: string, password: string, _remember: boolean) => {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: email.trim().toLowerCase(),
+      password,
+    })
+    if (error || !data.user) throw new Error("Email atau kata sandi salah.")
+    setUser(await profilToUser(data.user.id))
   }
 
-  const resetPassword = async (email: string, password: string) => {
-    const mail = email.trim().toLowerCase()
-    const users = read<StoredUser[]>(USERS_KEY, [])
-    const idx = users.findIndex((u) => u.email === mail)
-    if (idx < 0) throw new Error("Email tidak ditemukan.")
-    const salt = randomId()
-    users[idx] = { ...users[idx], salt, hash: await hashPassword(password, salt) }
-    write(USERS_KEY, users)
+  const resetPassword = async (email: string) => {
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+      redirectTo: window.location.origin,
+    })
+    if (error) throw new Error(error.message)
   }
 
-  const logout = () => {
-    localStorage.removeItem(SESSION_KEY)
-    sessionStorage.removeItem(SESSION_KEY)
+  const logout = async () => {
+    await supabase.auth.signOut()
     setUser(null)
   }
 
@@ -216,11 +265,31 @@ export type TravelGroup = {
   createdAt: string
   nama: string
   regIds: string[]
+  dariDatang: string
   lokasiDatang: string
   tglDatang: string
+  jamDatang: string
   lokasiBerangkat: string
+  keBerangkat: string
   tglBerangkat: string
   jamBerangkat: string
+}
+export type TripStatus = "Belum" | "Selesai"
+export type Trip = {
+  id: string
+  groupId: string
+  nama: string
+  jenis: "Kedatangan" | "Kepulangan"
+  leg: "datang" | "berangkat"
+  dari: string
+  ke: string
+  tanggal: string
+  jam: string
+  organizer: string
+  kendaraanId: string
+  kendaraan: string
+  status: TripStatus
+  passengers: { id: string; nama: string; mupel: string }[]
 }
 export const TRAVEL_KEY = "tks27_travel"
 
@@ -236,27 +305,30 @@ export type Registration = {
   gereja: string
   mupel: string
   foto: string
+  fotoPath?: string
   wa: string
   ukuran: string
   lomba: string[]
-  lombaStatus?: Record<string, { status: string; note?: string }>
+  lombaStatus?: Record<string, { status: string; note?: string; by?: string; at?: string }>
   medical?: Medical
-  akomodasi?: { roomId?: string; transportId?: string; status: string; note?: string }
+  akomodasi?: {
+    roomId?: string
+    transportId?: string
+    status: string
+    note?: string
+    hotelName?: string
+    roomName?: string
+    transportName?: string
+    route?: string
+    depart?: string
+    by?: string
+    at?: string
+  }
   adminNote?: string
+  verifiedBy?: string
+  verifiedAt?: string
   status: string
   createdAt: string
-}
-
-export const listRegs = (email: string) =>
-  read<Registration[]>(REG_KEY, [])
-    .filter((r) => r.email === email)
-    .map((r) => ({ ...r, id: r.id ?? r.regNo }))
-
-function saveReg(reg: Registration) {
-  const all = read<Registration[]>(REG_KEY, []).filter(
-    (r) => (r.id ?? r.regNo) !== reg.id,
-  )
-  write(REG_KEY, [...all, reg])
 }
 
 export function deleteReg(id: string) {
@@ -281,10 +353,20 @@ export type Payment = {
   createdAt: string
   status?: string
   adminNote?: string
+  verifiedBy?: string
+  verifiedAt?: string
 }
-export type Doc = { id: string; owner: string; file: FileInfo; note: string; createdAt: string; status?: string; adminNote?: string }
+export type Doc = { id: string; owner: string; file: FileInfo; note: string; createdAt: string; status?: string; adminNote?: string; verifiedBy?: string; verifiedAt?: string }
 
 export const ST = { wait: "Menunggu Verifikasi", ok: "Terverifikasi", no: "Ditolak" } as const
+export const isLocked = (status?: string) => (status ?? ST.wait) !== ST.wait
+export const LOCK_MSG = "Data terkunci setelah verifikasi. Hanya Superuser yang dapat membuka akses."
+export function verdictText(status?: string, by?: string, at?: string) {
+  if (!isLocked(status) || !by) return ""
+  const verb = status === ST.ok ? "Disetujui" : "Ditolak"
+  const when = at ? new Date(at).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" }) : ""
+  return `${verb} oleh ${by}${when ? ` · ${when}` : ""}`
+}
 export const statusTone = (s?: string) => (s === ST.ok ? "green" : s === ST.no ? "red" : "orange") as "green" | "red" | "orange"
 export function StatusChip({ s }: { s?: string }) {
   const v = s ?? ST.wait
@@ -300,11 +382,6 @@ export const TRANS_KEY = "tks27_transport"
 
 export const PAY_KEY = "tks27_payments"
 export const DOC_KEY = "tks27_suratTugas"
-
-const listOwned = <T extends { owner: string; createdAt: string }>(key: string, owner: string) =>
-  read<T[]>(key, [])
-    .filter((x) => x.owner === owner)
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
 
 export function upsert<T extends { id: string }>(key: string, item: T) {
   const all = read<T[]>(key, [])
@@ -327,6 +404,732 @@ export function detachReg(regId: string) {
     PAY_KEY,
     pays.map((p) => ({ ...p, regIds: p.regIds.filter((x) => x !== regId) })),
   )
+}
+
+const PESERTA_SELECT = `
+  id, nomor_registrasi, kontingen_id, nama, jenis, tempat_lahir, tanggal_lahir, jenis_kelamin,
+  gereja, mupel, whatsapp, ukuran_kaos, foto_path, status, catatan_admin, diverifikasi_pada, created_at,
+  verifikator:diverifikasi_oleh ( nama ),
+  peserta_lomba ( lomba, status, catatan_admin, diverifikasi_pada, verifikator:diverifikasi_oleh ( nama ) ),
+  riwayat_medis (
+    golongan_darah, alergi, penyakit_lain, obat, riwayat_rawat, kondisi_khusus,
+    kontak_nama, kontak_hubungan, kontak_telp, updated_at,
+    riwayat_medis_penyakit ( penyakit )
+  ),
+  penempatan (
+    kamar_id, transportasi_id, status, catatan_admin, diverifikasi_pada,
+    verifikator:diverifikasi_oleh ( nama ),
+    kamar ( nama, hotel ( nama ) ),
+    transportasi ( nama, rute, berangkat )
+  ),
+  kontingen:kontingen_id ( email, nama )
+`
+
+type Nested<T> = T | T[] | null | undefined
+
+function one<T>(value: Nested<T>): T | null {
+  if (!value) return null
+  return Array.isArray(value) ? (value[0] ?? null) : value
+}
+
+function throwIf(error: { message: string } | null) {
+  if (error) throw new Error(error.message)
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+}
+
+async function requireUser() {
+  const { data, error } = await supabase.auth.getUser()
+  if (error || !data.user) throw new Error("Sesi berakhir. Silakan masuk lagi.")
+  return data.user
+}
+
+async function profilIdByEmail(email: string) {
+  const { data, error } = await supabase.from("profil").select("id, email").eq("email", email.trim().toLowerCase()).maybeSingle()
+  throwIf(error)
+  return data
+}
+
+async function signedUrlMap(bucket: string, paths: string[]) {
+  const unique = [...new Set(paths.filter(Boolean))]
+  const map = new Map<string, string>()
+  if (!unique.length) return map
+  const { data, error } = await supabase.storage.from(bucket).createSignedUrls(unique, 60 * 60)
+  throwIf(error)
+  for (const item of data ?? []) {
+    if (item.path && item.signedUrl) map.set(item.path, item.signedUrl)
+  }
+  return map
+}
+
+async function uploadDataUrl(bucket: string, path: string, dataUrl: string, contentType: string) {
+  const blob = await (await fetch(dataUrl)).blob()
+  const { error } = await supabase.storage.from(bucket).upload(path, blob, { upsert: true, contentType })
+  throwIf(error)
+}
+
+function fileInfo(name: string, type: string, size: number, url: string): FileInfo {
+  return { name, type, size, data: url }
+}
+
+function verifierName(value: unknown) {
+  return one(value as Nested<{ nama?: string }>)?.nama || undefined
+}
+
+function mapPeserta(row: Record<string, unknown>, fotoUrl: string): Registration {
+  const lombaRows = (row.peserta_lomba as { lomba: string; status: string; catatan_admin: string | null; diverifikasi_pada?: string | null; verifikator?: unknown }[] | null) ?? []
+  const medis = one(row.riwayat_medis as Nested<Record<string, unknown>>)
+  const penyakit = ((medis?.riwayat_medis_penyakit as { penyakit: string }[] | undefined) ?? []).map((item) => item.penyakit)
+  const tempat = one(row.penempatan as Nested<Record<string, unknown>>)
+  const kamar = one(tempat?.kamar as Nested<Record<string, unknown>>)
+  const hotel = one(kamar?.hotel as Nested<{ nama?: string }>)
+  const transport = one(tempat?.transportasi as Nested<Record<string, unknown>>)
+  const lombaStatus: Record<string, { status: string; note?: string; by?: string; at?: string }> = {}
+  for (const item of lombaRows) {
+    lombaStatus[item.lomba] = {
+      status: item.status,
+      note: item.catatan_admin ?? undefined,
+      by: verifierName(item.verifikator),
+      at: item.diverifikasi_pada ?? undefined,
+    }
+  }
+  const kontingen = one(row.kontingen as Nested<{ email?: string; nama?: string }>)
+  return {
+    id: String(row.id),
+    regNo: String(row.nomor_registrasi),
+    email: kontingen?.email ?? "",
+    nama: String(row.nama),
+    jenis: String(row.jenis),
+    tempat: String(row.tempat_lahir),
+    tanggal: String(row.tanggal_lahir),
+    gender: String(row.jenis_kelamin),
+    gereja: String(row.gereja),
+    mupel: String(row.mupel),
+    foto: fotoUrl,
+    fotoPath: (row.foto_path as string | null) ?? undefined,
+    wa: String(row.whatsapp),
+    ukuran: String(row.ukuran_kaos),
+    lomba: lombaRows.map((item) => item.lomba),
+    lombaStatus,
+    medical: medis
+      ? {
+          golongan: String(medis.golongan_darah),
+          alergi: String(medis.alergi ?? ""),
+          penyakit,
+          penyakitLain: String(medis.penyakit_lain ?? ""),
+          obat: String(medis.obat ?? ""),
+          riwayatRawat: String(medis.riwayat_rawat ?? ""),
+          kondisiKhusus: String(medis.kondisi_khusus ?? ""),
+          kontakNama: String(medis.kontak_nama),
+          kontakHubungan: String(medis.kontak_hubungan),
+          kontakTelp: String(medis.kontak_telp),
+          updatedAt: String(medis.updated_at ?? ""),
+        }
+      : undefined,
+    akomodasi: tempat
+      ? {
+          roomId: (tempat.kamar_id as string | null) ?? undefined,
+          transportId: (tempat.transportasi_id as string | null) ?? undefined,
+          status: String(tempat.status),
+          note: (tempat.catatan_admin as string | null) ?? undefined,
+          by: verifierName(tempat.verifikator),
+          at: (tempat.diverifikasi_pada as string | null) ?? undefined,
+          hotelName: hotel?.nama,
+          roomName: kamar?.nama as string | undefined,
+          transportName: transport?.nama as string | undefined,
+          route: transport?.rute as string | undefined,
+          depart: transport?.berangkat as string | undefined,
+        }
+      : undefined,
+    adminNote: (row.catatan_admin as string | null) ?? undefined,
+    verifiedBy: verifierName(row.verifikator),
+    verifiedAt: (row.diverifikasi_pada as string | null) ?? undefined,
+    status: String(row.status),
+    createdAt: String(row.created_at),
+  }
+}
+
+async function fetchPeserta(kontingenId?: string): Promise<Registration[]> {
+  let query = supabase.from("peserta").select(PESERTA_SELECT).order("created_at")
+  if (kontingenId) query = query.eq("kontingen_id", kontingenId)
+  const { data, error } = await query
+  throwIf(error)
+  const rows = (data ?? []) as unknown as Record<string, unknown>[]
+  const photos = await signedUrlMap("foto-peserta", rows.map((row) => String(row.foto_path ?? "")))
+  return rows.map((row) => mapPeserta(row, photos.get(String(row.foto_path ?? "")) ?? ""))
+}
+
+export async function listRegs(email: string): Promise<Registration[]> {
+  const owner = await profilIdByEmail(email)
+  if (!owner) return []
+  return fetchPeserta(owner.id)
+}
+
+export async function listAllPeserta(): Promise<Registration[]> {
+  return fetchPeserta()
+}
+
+async function syncLomba(pesertaId: string, lomba: string[]) {
+  const { data, error } = await supabase.from("peserta_lomba").select("lomba").eq("peserta_id", pesertaId)
+  throwIf(error)
+  const have = new Set((data ?? []).map((row) => row.lomba as string))
+  const next = new Set(lomba)
+  const remove = [...have].filter((item) => !next.has(item))
+  const add = [...next].filter((item) => !have.has(item))
+  if (remove.length) {
+    const { error: deleteError } = await supabase.from("peserta_lomba").delete().eq("peserta_id", pesertaId).in("lomba", remove)
+    throwIf(deleteError)
+  }
+  if (add.length) {
+    const { error: insertError } = await supabase.from("peserta_lomba").insert(add.map((item) => ({ peserta_id: pesertaId, lomba: item })))
+    throwIf(insertError)
+  }
+}
+
+export async function savePeserta(reg: Registration) {
+  const user = await requireUser()
+  const editing = Boolean(reg.regNo && reg.id && isUuid(reg.id))
+  const row = {
+    nama: reg.nama,
+    jenis: reg.jenis,
+    tempat_lahir: reg.tempat,
+    tanggal_lahir: reg.tanggal,
+    jenis_kelamin: reg.gender,
+    gereja: reg.gereja,
+    mupel: reg.mupel,
+    whatsapp: reg.wa,
+    ukuran_kaos: reg.ukuran,
+  }
+
+  let pesertaId = reg.id
+  if (editing) {
+    let fotoPath = reg.fotoPath ?? null
+    if (reg.foto.startsWith("data:")) {
+      fotoPath = `${user.id}/${pesertaId}.jpg`
+      await uploadDataUrl("foto-peserta", fotoPath, reg.foto, "image/jpeg")
+    }
+    const { data, error } = await supabase
+      .from("peserta")
+      .update({ ...row, foto_path: fotoPath })
+      .eq("id", pesertaId)
+      .eq("kontingen_id", user.id)
+      .select("id")
+      .maybeSingle()
+    throwIf(error)
+    if (!data) throw new Error("Peserta tidak ditemukan.")
+    await syncLomba(data.id, reg.lomba)
+    return
+  }
+
+  const { data, error } = await supabase
+    .from("peserta")
+    .insert({ ...row, kontingen_id: user.id, foto_path: null })
+    .select("id")
+    .single()
+  throwIf(error)
+  if (!data) throw new Error("Peserta gagal disimpan.")
+  pesertaId = data.id
+
+  if (reg.foto.startsWith("data:")) {
+    const fotoPath = `${user.id}/${pesertaId}.jpg`
+    await uploadDataUrl("foto-peserta", fotoPath, reg.foto, "image/jpeg")
+    const { error: fotoError } = await supabase.from("peserta").update({ foto_path: fotoPath }).eq("id", pesertaId)
+    throwIf(fotoError)
+  }
+
+  if (reg.lomba.length) {
+    const { error: lombaError } = await supabase
+      .from("peserta_lomba")
+      .insert(reg.lomba.map((lomba) => ({ peserta_id: pesertaId, lomba })))
+    throwIf(lombaError)
+  }
+}
+
+export async function deletePeserta(id: string) {
+  const user = await requireUser()
+  const { error } = await supabase.from("peserta").delete().eq("id", id).eq("kontingen_id", user.id)
+  throwIf(error)
+}
+
+export async function deletePesertaAdmin(id: string) {
+  const { data, error } = await supabase.from("peserta").delete().eq("id", id).select("id").maybeSingle()
+  throwIf(error)
+  if (!data) throw new Error("Peserta tidak terhapus. Jalankan skrip supabase/admin-akses.sql di SQL Editor.")
+}
+
+export async function setPesertaStatus(id: string, status: string, note?: string) {
+  const { data, error } = await supabase.from("peserta").update({ status, catatan_admin: note || null }).eq("id", id).select("id").maybeSingle()
+  throwIf(error)
+  if (!data) throw new Error("Status peserta tidak tersimpan. Periksa peran akun.")
+}
+
+export async function setLombaStatus(pesertaId: string, lomba: string, status: string, note?: string) {
+  const { data, error } = await supabase
+    .from("peserta_lomba")
+    .update({ status, catatan_admin: note || null })
+    .eq("peserta_id", pesertaId)
+    .eq("lomba", lomba)
+    .select("peserta_id")
+    .maybeSingle()
+  throwIf(error)
+  if (!data) throw new Error("Status lomba tidak tersimpan.")
+}
+
+export async function addPesertaLomba(pesertaId: string, lomba: string) {
+  const { error } = await supabase.from("peserta_lomba").insert({ peserta_id: pesertaId, lomba })
+  throwIf(error)
+}
+
+export async function removePesertaLomba(pesertaId: string, lomba: string) {
+  const { error } = await supabase.from("peserta_lomba").delete().eq("peserta_id", pesertaId).eq("lomba", lomba)
+  throwIf(error)
+}
+
+export async function saveMedical(pesertaId: string, medical: Medical) {
+  const { error } = await supabase.from("riwayat_medis").upsert({
+    peserta_id: pesertaId,
+    golongan_darah: medical.golongan,
+    alergi: medical.alergi,
+    penyakit_lain: medical.penyakitLain,
+    obat: medical.obat,
+    riwayat_rawat: medical.riwayatRawat,
+    kondisi_khusus: medical.kondisiKhusus,
+    kontak_nama: medical.kontakNama,
+    kontak_hubungan: medical.kontakHubungan,
+    kontak_telp: medical.kontakTelp,
+  })
+  throwIf(error)
+  const { error: deleteError } = await supabase.from("riwayat_medis_penyakit").delete().eq("peserta_id", pesertaId)
+  throwIf(deleteError)
+  if (!medical.penyakit.length) return
+  const { error: insertError } = await supabase.from("riwayat_medis_penyakit").insert(
+    medical.penyakit.map((penyakit) => ({ peserta_id: pesertaId, penyakit })),
+  )
+  throwIf(insertError)
+}
+
+const TRAVEL_SELECT = `
+  id, nama, dari_datang, lokasi_datang, tanggal_datang, jam_datang,
+  lokasi_berangkat, ke_berangkat, tanggal_berangkat, jam_berangkat, created_at,
+  grup_perjalanan_anggota ( peserta_id )
+`
+
+function mapTravelGroup(row: {
+  id: string
+  nama: string
+  dari_datang?: string | null
+  lokasi_datang: string
+  tanggal_datang: string
+  jam_datang: string
+  lokasi_berangkat: string
+  ke_berangkat?: string | null
+  tanggal_berangkat: string
+  jam_berangkat: string
+  created_at: string
+  grup_perjalanan_anggota?: { peserta_id: string }[] | null
+}, ownerEmail: string): TravelGroup {
+  return {
+    id: row.id,
+    owner: ownerEmail,
+    createdAt: row.created_at,
+    nama: row.nama,
+    regIds: (row.grup_perjalanan_anggota ?? []).map((member) => member.peserta_id),
+    dariDatang: row.dari_datang ?? "",
+    lokasiDatang: row.lokasi_datang,
+    tglDatang: row.tanggal_datang,
+    jamDatang: String(row.jam_datang ?? "").slice(0, 5),
+    lokasiBerangkat: row.lokasi_berangkat,
+    keBerangkat: row.ke_berangkat ?? "",
+    tglBerangkat: row.tanggal_berangkat,
+    jamBerangkat: String(row.jam_berangkat).slice(0, 5),
+  }
+}
+
+export async function listTravelGroups(email: string): Promise<TravelGroup[]> {
+  const owner = await profilIdByEmail(email)
+  if (!owner) return []
+  const { data, error } = await supabase.from("grup_perjalanan").select(TRAVEL_SELECT).eq("kontingen_id", owner.id).order("created_at")
+  throwIf(error)
+  return (data ?? []).map((row) => mapTravelGroup(row, owner.email))
+}
+
+export async function saveTravelGroup(group: TravelGroup) {
+  const user = await requireUser()
+  const id = isUuid(group.id) ? group.id : newUuid()
+  const { error } = await supabase.from("grup_perjalanan").upsert({
+    id,
+    kontingen_id: user.id,
+    nama: group.nama,
+    dari_datang: group.dariDatang,
+    lokasi_datang: group.lokasiDatang,
+    tanggal_datang: group.tglDatang,
+    jam_datang: group.jamDatang,
+    lokasi_berangkat: group.lokasiBerangkat,
+    ke_berangkat: group.keBerangkat,
+    tanggal_berangkat: group.tglBerangkat,
+    jam_berangkat: group.jamBerangkat,
+  })
+  throwIf(error)
+  if (group.regIds.length) {
+    const { error: movedError } = await supabase.from("grup_perjalanan_anggota").delete().in("peserta_id", group.regIds)
+    throwIf(movedError)
+  }
+  const { error: clearError } = await supabase.from("grup_perjalanan_anggota").delete().eq("grup_id", id)
+  throwIf(clearError)
+  if (!group.regIds.length) return
+  const { error: memberError } = await supabase.from("grup_perjalanan_anggota").insert(
+    group.regIds.map((pesertaId) => ({ grup_id: id, peserta_id: pesertaId })),
+  )
+  throwIf(memberError)
+}
+
+type TripRow = {
+  id: string
+  nama: string
+  dari_datang: string | null
+  lokasi_datang: string
+  tanggal_datang: string
+  jam_datang: string
+  lokasi_berangkat: string
+  ke_berangkat: string | null
+  tanggal_berangkat: string
+  jam_berangkat: string
+  status_datang: TripStatus
+  status_berangkat: TripStatus
+  kendaraan_datang_id: string | null
+  kendaraan_berangkat_id: string | null
+  kontingen: { nama?: string } | { nama?: string }[] | null
+  kendaraan_datang: { nama?: string; jenis?: string } | { nama?: string; jenis?: string }[] | null
+  kendaraan_berangkat: { nama?: string; jenis?: string } | { nama?: string; jenis?: string }[] | null
+  grup_perjalanan_anggota: { peserta: { id: string; nama: string; mupel: string } | { id: string; nama: string; mupel: string }[] | null }[] | null
+}
+
+function vehicleLabel(value: TripRow["kendaraan_datang"]) {
+  const row = one(value)
+  if (!row?.nama) return ""
+  return row.jenis ? `${row.nama} (${row.jenis})` : row.nama
+}
+
+function tripPassengers(row: TripRow): Trip["passengers"] {
+  return (row.grup_perjalanan_anggota ?? []).flatMap((member) => {
+    const peserta = one(member.peserta)
+    return peserta ? [{ id: peserta.id, nama: peserta.nama, mupel: peserta.mupel }] : []
+  })
+}
+
+export async function listTrips(): Promise<Trip[]> {
+  const { data, error } = await supabase
+    .from("grup_perjalanan")
+    .select(`
+      id, nama, dari_datang, lokasi_datang, tanggal_datang, jam_datang,
+      lokasi_berangkat, ke_berangkat, tanggal_berangkat, jam_berangkat,
+      status_datang, status_berangkat, kendaraan_datang_id, kendaraan_berangkat_id,
+      kontingen:kontingen_id ( nama ),
+      kendaraan_datang:kendaraan_datang_id ( nama, jenis ),
+      kendaraan_berangkat:kendaraan_berangkat_id ( nama, jenis ),
+      grup_perjalanan_anggota ( peserta:peserta_id ( id, nama, mupel ) )
+    `)
+    .order("tanggal_datang")
+  throwIf(error)
+  const trips: Trip[] = []
+  for (const raw of (data ?? []) as TripRow[]) {
+    const organizer = one(raw.kontingen)?.nama || "Kontingen"
+    const passengers = tripPassengers(raw)
+    trips.push({
+      id: `${raw.id}:datang`,
+      groupId: raw.id,
+      nama: raw.nama,
+      jenis: "Kedatangan",
+      leg: "datang",
+      dari: raw.dari_datang ?? "",
+      ke: raw.lokasi_datang,
+      tanggal: raw.tanggal_datang,
+      jam: String(raw.jam_datang ?? "").slice(0, 5),
+      organizer,
+      kendaraanId: raw.kendaraan_datang_id ?? "",
+      kendaraan: vehicleLabel(raw.kendaraan_datang),
+      status: raw.status_datang ?? "Belum",
+      passengers,
+    })
+    trips.push({
+      id: `${raw.id}:berangkat`,
+      groupId: raw.id,
+      nama: raw.nama,
+      jenis: "Kepulangan",
+      leg: "berangkat",
+      dari: raw.lokasi_berangkat,
+      ke: raw.ke_berangkat ?? "",
+      tanggal: raw.tanggal_berangkat,
+      jam: String(raw.jam_berangkat ?? "").slice(0, 5),
+      organizer,
+      kendaraanId: raw.kendaraan_berangkat_id ?? "",
+      kendaraan: vehicleLabel(raw.kendaraan_berangkat),
+      status: raw.status_berangkat ?? "Belum",
+      passengers,
+    })
+  }
+  return trips.sort((a, b) => a.tanggal.localeCompare(b.tanggal) || a.jam.localeCompare(b.jam) || a.nama.localeCompare(b.nama))
+}
+
+export async function updateTrip(groupId: string, leg: Trip["leg"], patch: { lokasi?: string; kendaraanId?: string; status?: TripStatus }) {
+  const row: Record<string, string | null> = {}
+  if (leg === "datang") {
+    if (patch.lokasi !== undefined) row.dari_datang = patch.lokasi
+    if (patch.kendaraanId !== undefined) row.kendaraan_datang_id = patch.kendaraanId || null
+    if (patch.status) row.status_datang = patch.status
+  } else {
+    if (patch.lokasi !== undefined) row.ke_berangkat = patch.lokasi
+    if (patch.kendaraanId !== undefined) row.kendaraan_berangkat_id = patch.kendaraanId || null
+    if (patch.status) row.status_berangkat = patch.status
+  }
+  const { data, error } = await supabase.from("grup_perjalanan").update(row).eq("id", groupId).select("id").maybeSingle()
+  throwIf(error)
+  if (!data) throw new Error("Jadwal trip tidak tersimpan. Jalankan skrip supabase/jadwal-trip.sql di SQL Editor.")
+}
+
+export async function deleteTravelGroup(id: string) {
+  const user = await requireUser()
+  const { error } = await supabase.from("grup_perjalanan").delete().eq("id", id).eq("kontingen_id", user.id)
+  throwIf(error)
+}
+
+async function fetchPayments(kontingenId?: string): Promise<Payment[]> {
+  let query = supabase
+    .from("pembayaran")
+    .select("id, jumlah, tanggal, catatan, berkas_path, berkas_nama, berkas_mime, berkas_ukuran, status, catatan_admin, diverifikasi_pada, created_at, pembayaran_peserta ( peserta_id ), kontingen:kontingen_id ( email ), verifikator:diverifikasi_oleh ( nama )")
+    .order("created_at")
+  if (kontingenId) query = query.eq("kontingen_id", kontingenId)
+  const { data, error } = await query
+  throwIf(error)
+  const rows = data ?? []
+  const urls = await signedUrlMap("bukti-pembayaran", rows.map((row) => row.berkas_path))
+  return rows.map((row) => {
+    const kontingen = one(row.kontingen as Nested<{ email?: string }>)
+    return {
+      id: row.id,
+      owner: kontingen?.email ?? "",
+      file: fileInfo(row.berkas_nama, row.berkas_mime, row.berkas_ukuran, urls.get(row.berkas_path) ?? ""),
+      amount: Number(row.jumlah),
+      date: row.tanggal,
+      note: row.catatan,
+      regIds: (row.pembayaran_peserta ?? []).map((item: { peserta_id: string }) => item.peserta_id),
+      createdAt: row.created_at,
+      status: row.status,
+      adminNote: row.catatan_admin ?? undefined,
+      verifiedBy: verifierName(row.verifikator),
+      verifiedAt: row.diverifikasi_pada ?? undefined,
+    }
+  })
+}
+
+export async function listPayments(email: string): Promise<Payment[]> {
+  const owner = await profilIdByEmail(email)
+  if (!owner) return []
+  return fetchPayments(owner.id)
+}
+
+export async function listAllPayments(): Promise<Payment[]> {
+  return fetchPayments()
+}
+
+export async function setPaymentStatus(id: string, status: string, note?: string) {
+  const { data, error } = await supabase.from("pembayaran").update({ status, catatan_admin: note || null }).eq("id", id).select("id").maybeSingle()
+  throwIf(error)
+  if (!data) throw new Error("Status pembayaran tidak tersimpan.")
+}
+
+export async function savePayment(file: FileInfo, amount: number, date: string, note: string) {
+  const user = await requireUser()
+  const id = newUuid()
+  const extension = file.type === "application/pdf" ? "pdf" : "jpg"
+  const path = `${user.id}/${id}.${extension}`
+  await uploadDataUrl("bukti-pembayaran", path, file.data, file.type)
+  const { error } = await supabase.from("pembayaran").insert({
+    id,
+    kontingen_id: user.id,
+    jumlah: amount,
+    tanggal: date,
+    catatan: note,
+    berkas_path: path,
+    berkas_nama: file.name,
+    berkas_mime: file.type,
+    berkas_ukuran: file.size,
+  })
+  throwIf(error)
+}
+
+export async function setPaymentParticipants(paymentId: string, regIds: string[]) {
+  const { data, error } = await supabase.from("pembayaran_peserta").select("peserta_id").eq("pembayaran_id", paymentId)
+  throwIf(error)
+  const have = new Set((data ?? []).map((row) => row.peserta_id as string))
+  const next = new Set(regIds)
+  const remove = [...have].filter((id) => !next.has(id))
+  const add = [...next].filter((id) => !have.has(id))
+  if (remove.length) {
+    const { error: deleteError } = await supabase.from("pembayaran_peserta").delete().eq("pembayaran_id", paymentId).in("peserta_id", remove)
+    throwIf(deleteError)
+  }
+  if (add.length) {
+    const { error: insertError } = await supabase.from("pembayaran_peserta").insert(add.map((pesertaId) => ({ pembayaran_id: paymentId, peserta_id: pesertaId })))
+    throwIf(insertError)
+  }
+}
+
+export async function deletePayment(id: string) {
+  const user = await requireUser()
+  const { error } = await supabase.from("pembayaran").delete().eq("id", id).eq("kontingen_id", user.id)
+  throwIf(error)
+}
+
+async function fetchSurat(kontingenId?: string): Promise<Doc[]> {
+  let query = supabase
+    .from("surat_tugas")
+    .select("id, catatan, berkas_path, berkas_nama, berkas_mime, berkas_ukuran, status, catatan_admin, diverifikasi_pada, created_at, kontingen:kontingen_id ( email ), verifikator:diverifikasi_oleh ( nama )")
+    .order("created_at")
+  if (kontingenId) query = query.eq("kontingen_id", kontingenId)
+  const { data, error } = await query
+  throwIf(error)
+  const rows = data ?? []
+  const urls = await signedUrlMap("surat-tugas", rows.map((row) => row.berkas_path))
+  return rows.map((row) => {
+    const kontingen = one(row.kontingen as Nested<{ email?: string }>)
+    return {
+      id: row.id,
+      owner: kontingen?.email ?? "",
+      file: fileInfo(row.berkas_nama, row.berkas_mime, row.berkas_ukuran, urls.get(row.berkas_path) ?? ""),
+      note: row.catatan,
+      createdAt: row.created_at,
+      status: row.status,
+      adminNote: row.catatan_admin ?? undefined,
+      verifiedBy: verifierName(row.verifikator),
+      verifiedAt: row.diverifikasi_pada ?? undefined,
+    }
+  })
+}
+
+export async function listSurat(email: string): Promise<Doc[]> {
+  const owner = await profilIdByEmail(email)
+  if (!owner) return []
+  return fetchSurat(owner.id)
+}
+
+export async function listAllSurat(): Promise<Doc[]> {
+  return fetchSurat()
+}
+
+export async function setSuratStatus(id: string, status: string, note?: string) {
+  const { data, error } = await supabase.from("surat_tugas").update({ status, catatan_admin: note || null }).eq("id", id).select("id").maybeSingle()
+  throwIf(error)
+  if (!data) throw new Error("Status surat tugas tidak tersimpan.")
+}
+
+export async function saveSurat(file: FileInfo, note: string) {
+  const user = await requireUser()
+  const id = newUuid()
+  const extension = file.type === "application/pdf" ? "pdf" : "jpg"
+  const path = `${user.id}/${id}.${extension}`
+  await uploadDataUrl("surat-tugas", path, file.data, file.type)
+  const { error } = await supabase.from("surat_tugas").insert({
+    id,
+    kontingen_id: user.id,
+    catatan: note,
+    berkas_path: path,
+    berkas_nama: file.name,
+    berkas_mime: file.type,
+    berkas_ukuran: file.size,
+  })
+  throwIf(error)
+}
+
+export async function deleteSurat(id: string) {
+  const user = await requireUser()
+  const { error } = await supabase.from("surat_tugas").delete().eq("id", id).eq("kontingen_id", user.id)
+  throwIf(error)
+}
+
+export async function listProfiles(): Promise<StoredUser[]> {
+  const { data, error } = await supabase.from("profil").select("id, nama, email, peran").order("nama")
+  throwIf(error)
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    name: row.nama,
+    email: row.email,
+    role: row.peran as Role,
+    salt: "",
+    hash: "",
+  }))
+}
+
+export async function listHotels(): Promise<Hotel[]> {
+  const { data, error } = await supabase.from("hotel").select("id, nama, alamat").order("nama")
+  throwIf(error)
+  return (data ?? []).map((row) => ({ id: row.id, name: row.nama, address: row.alamat }))
+}
+
+export async function saveHotel(name: string, address: string) {
+  const { error } = await supabase.from("hotel").insert({ nama: name, alamat: address })
+  throwIf(error)
+}
+
+export async function deleteHotel(id: string) {
+  const { error } = await supabase.from("hotel").delete().eq("id", id)
+  throwIf(error)
+}
+
+export async function listRooms(): Promise<Room[]> {
+  const { data, error } = await supabase.from("kamar").select("id, hotel_id, nama, tipe, kapasitas").order("nama")
+  throwIf(error)
+  return (data ?? []).map((row) => ({ id: row.id, hotelId: row.hotel_id, name: row.nama, type: row.tipe, capacity: row.kapasitas }))
+}
+
+export async function saveRoom(hotelId: string, name: string, type: string, capacity: number) {
+  const { error } = await supabase.from("kamar").insert({ hotel_id: hotelId, nama: name, tipe: type, kapasitas: capacity })
+  throwIf(error)
+}
+
+export async function deleteRoom(id: string) {
+  const { error } = await supabase.from("kamar").delete().eq("id", id)
+  throwIf(error)
+}
+
+export async function listTransport(): Promise<Trans[]> {
+  const { data, error } = await supabase.from("transportasi").select("id, jenis, nama, rute, berangkat, kapasitas").order("berangkat")
+  throwIf(error)
+  return (data ?? []).map((row) => ({ id: row.id, kind: row.jenis, name: row.nama, route: row.rute, depart: row.berangkat, capacity: row.kapasitas }))
+}
+
+export async function saveTransport(kind: string, name: string, route: string, depart: string, capacity: number) {
+  const { error } = await supabase.from("transportasi").insert({
+    jenis: kind,
+    nama: name,
+    rute: route,
+    berangkat: new Date(depart).toISOString(),
+    kapasitas: capacity,
+  })
+  throwIf(error)
+}
+
+export async function deleteTransport(id: string) {
+  const { error } = await supabase.from("transportasi").delete().eq("id", id)
+  throwIf(error)
+}
+
+export async function savePenempatan(pesertaId: string, acc: { roomId?: string; transportId?: string; status: string; note?: string }) {
+  if (!acc.roomId && !acc.transportId) {
+    const { error } = await supabase.from("penempatan").delete().eq("peserta_id", pesertaId)
+    throwIf(error)
+    return
+  }
+  const { error } = await supabase.from("penempatan").upsert({
+    peserta_id: pesertaId,
+    kamar_id: acc.roomId ?? null,
+    transportasi_id: acc.transportId ?? null,
+    status: acc.status,
+    catatan_admin: acc.note ?? null,
+  })
+  throwIf(error)
 }
 
 const readAsDataURL = (file: File) =>
@@ -595,7 +1398,7 @@ export function LoginPage({
     if (!EMAIL_RE.test(email.trim())) e.email = "Masukkan alamat email yang valid."
     if (mode === "login") {
       if (!password) e.password = "Kata sandi wajib diisi."
-    } else {
+    } else if (mode === "signup") {
       if (password.length < 8) e.password = "Kata sandi minimal 8 karakter."
       else if (!/[A-Za-z]/.test(password) || !/\d/.test(password))
         e.password = "Gunakan kombinasi huruf dan angka."
@@ -631,11 +1434,11 @@ export function LoginPage({
         await auth.signup(name, email, password)
         onSuccess()
       } else {
-        await auth.resetPassword(email, password)
+        await auth.resetPassword(email)
         setMode("login")
         setPassword("")
         setConfirm("")
-        setInfo("Kata sandi berhasil diubah. Silakan masuk dengan kata sandi baru.")
+        setInfo("Tautan pengaturan ulang kata sandi sudah dikirim. Periksa email Anda.")
       }
     } catch (err) {
       setFormError((err as Error).message)
@@ -645,7 +1448,7 @@ export function LoginPage({
   }
 
   const title = { login: "MASUK", signup: "BUAT AKUN", reset: "ATUR ULANG SANDI" }[mode]
-  const cta = { login: "MASUK", signup: "DAFTAR AKUN", reset: "SIMPAN KATA SANDI" }[mode]
+  const cta = { login: "MASUK", signup: "DAFTAR AKUN", reset: "KIRIM TAUTAN" }[mode]
 
   const err = (k: string) => (errors[k] ? { borderColor: "#ff8a65" } : {})
 
@@ -735,16 +1538,16 @@ export function LoginPage({
               <input id="auth-email" type="email" className="tks-input" style={{ ...inputStyle, ...err("email") }} value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" placeholder="nama@email.com" />
             </Field>
 
-            <Field label={mode === "reset" ? "Kata Sandi Baru" : "Kata Sandi"} htmlFor="auth-pass" error={errors.password} hint={mode !== "login" ? "Minimal 8 karakter, kombinasi huruf dan angka." : undefined}>
+            {mode !== "reset" && <Field label="Kata Sandi" htmlFor="auth-pass" error={errors.password} hint={mode === "signup" ? "Minimal 8 karakter, kombinasi huruf dan angka." : undefined}>
               <div style={{ position: "relative" }}>
                 <input id="auth-pass" type={show ? "text" : "password"} className="tks-input" style={{ ...inputStyle, ...err("password"), paddingRight: 72 }} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={mode === "login" ? "current-password" : "new-password"} placeholder="••••••••" />
                 <button type="button" onClick={() => setShow(!show)} aria-label={show ? "Sembunyikan kata sandi" : "Tampilkan kata sandi"} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 64, background: "none", border: "none", color: O, fontFamily: BC, fontWeight: 700, fontSize: 12, letterSpacing: 1.5, cursor: "pointer" }}>
                   {show ? "HIDE" : "SHOW"}
                 </button>
               </div>
-            </Field>
+            </Field>}
 
-            {mode !== "login" && (
+            {mode === "signup" && (
               <Field label="Konfirmasi Kata Sandi" htmlFor="auth-confirm" error={errors.confirm}>
                 <input id="auth-confirm" type={show ? "text" : "password"} className="tks-input" style={{ ...inputStyle, ...err("confirm") }} value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" placeholder="••••••••" />
               </Field>
@@ -818,20 +1621,44 @@ export const fmtDate = (iso: string) =>
 type Tab = "peserta" | "medis" | "perjalanan" | "pembayaran" | "surat"
 
 export function RegistrationPage({ user }: { user: User }) {
-  const [regs, setRegs] = useState<Registration[]>(() => listRegs(user.email))
-  const [pays, setPays] = useState<Payment[]>(() => listOwned<Payment>(PAY_KEY, user.email))
-  const [docs, setDocs] = useState<Doc[]>(() => listOwned<Doc>(DOC_KEY, user.email))
-  const [groups, setGroups] = useState<TravelGroup[]>(() => listOwned<TravelGroup>(TRAVEL_KEY, user.email))
+  const [regs, setRegs] = useState<Registration[]>([])
+  const [pays, setPays] = useState<Payment[]>([])
+  const [docs, setDocs] = useState<Doc[]>([])
+  const [groups, setGroups] = useState<TravelGroup[]>([])
   const [tab, setTab] = useState<Tab>("peserta")
   const [editing, setEditing] = useState<Registration | "new" | null>(null)
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState("")
 
-  const refresh = () => {
-    setRegs(listRegs(user.email))
-    setPays(listOwned<Payment>(PAY_KEY, user.email))
-    setDocs(listOwned<Doc>(DOC_KEY, user.email))
-    setGroups(listOwned<TravelGroup>(TRAVEL_KEY, user.email))
-  }
+  const refresh = useCallback(async () => {
+    try {
+      const [nextRegs, nextPays, nextDocs, nextGroups] = await Promise.all([
+        listRegs(user.email),
+        listPayments(user.email),
+        listSurat(user.email),
+        listTravelGroups(user.email),
+      ])
+      setRegs(nextRegs)
+      setPays(nextPays)
+      setDocs(nextDocs)
+      setGroups(nextGroups)
+      setLoadError("")
+    } catch (error) {
+      setLoadError((error as Error).message)
+    }
+  }, [user.email])
+
+  useEffect(() => {
+    let live = true
+    setLoading(true)
+    void refresh().finally(() => {
+      if (live) setLoading(false)
+    })
+    return () => {
+      live = false
+    }
+  }, [refresh])
 
   if (editing) {
     return (
@@ -841,7 +1668,7 @@ export function RegistrationPage({ user }: { user: User }) {
           existing={editing === "new" ? null : editing}
           onCancel={() => setEditing(null)}
           onSaved={() => {
-            refresh()
+            void refresh()
             setEditing(null)
             window.scrollTo({ top: 0, behavior: "smooth" })
           }}
@@ -870,6 +1697,8 @@ export function RegistrationPage({ user }: { user: User }) {
         <p style={{ fontFamily: BB, fontSize: 15, color: "#bbb", margin: "0 0 28px", lineHeight: 1.7 }}>
           Ketua kontingen: <strong style={{ color: "#fff" }}>{user.name}</strong> ({user.email}). Kelola peserta, riwayat medis, jadwal kedatangan dan keberangkatan, bukti pembayaran, dan surat tugas dari satu tempat.
         </p>
+        {loadError && <Banner tone="error">{loadError}</Banner>}
+        {loading && <p style={{ fontFamily: BB, fontSize: 14, color: "#aaa" }}>Memuat data kontingen…</p>}
 
         <div className="reg-layout">
         <nav role="tablist" aria-orientation="vertical" className="reg-nav">
@@ -894,10 +1723,12 @@ export function RegistrationPage({ user }: { user: User }) {
             onAdd={() => setEditing("new")}
             onEdit={setEditing}
             onDelete={(id) => {
-              deleteReg(id)
-              detachReg(id)
-              setConfirmId(null)
-              refresh()
+              void deletePeserta(id)
+                .then(() => {
+                  setConfirmId(null)
+                  return refresh()
+                })
+                .catch((error: Error) => setLoadError(error.message))
             }}
           />
         )}
@@ -991,17 +1822,15 @@ function RegistrationForm({
     return Object.keys(e).length === 0
   }
 
-  const submit = (ev: React.FormEvent) => {
+  const submit = async (ev: React.FormEvent) => {
     ev.preventDefault()
     setFormError("")
     if (!validate()) return
     setBusy(true)
     const record: Registration = {
       ...existing,
-      id: existing?.id ?? randomId(),
-      regNo:
-        existing?.regNo ??
-        `TKS27-${Date.now().toString(36).slice(-4)}${Math.random().toString(36).slice(2, 4)}`.toUpperCase(),
+      id: existing?.id ?? "",
+      regNo: existing?.regNo ?? "",
       email: user.email,
       nama: form.nama.trim(),
       jenis: form.jenis,
@@ -1011,21 +1840,21 @@ function RegistrationForm({
       gereja: form.gereja.trim(),
       mupel: form.mupel.trim(),
       foto,
+      fotoPath: existing?.fotoPath,
       wa: form.wa.replace(/[\s-]/g, ""),
       ukuran: form.ukuran,
       lomba,
       lombaStatus: Object.fromEntries(
         Object.entries(existing?.lombaStatus ?? {}).filter(([k]) => lomba.includes(k)),
       ),
-      adminNote: undefined,
-      status: ST.wait,
+      status: existing?.status ?? ST.wait,
       createdAt: existing?.createdAt ?? new Date().toISOString(),
     }
     try {
-      saveReg(record)
+      await savePeserta(record)
       onSaved()
-    } catch {
-      setFormError("Penyimpanan gagal karena ruang penyimpanan peramban penuh. Gunakan berkas yang lebih kecil.")
+    } catch (error) {
+      setFormError((error as Error).message)
     } finally {
       setBusy(false)
     }
@@ -1111,14 +1940,17 @@ function RegistrationForm({
           <div role="group" aria-label="Pendaftaran Lomba" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {LOMBA.map((l) => {
               const on = lomba.includes(l)
+              const lockedLomba = isLocked(existing?.lombaStatus?.[l]?.status)
               return (
                 <button
                   key={l}
                   type="button"
                   aria-pressed={on}
+                  disabled={lockedLomba}
+                  title={verdictText(existing?.lombaStatus?.[l]?.status, existing?.lombaStatus?.[l]?.by, existing?.lombaStatus?.[l]?.at) || undefined}
                   className="tks-seg"
-                  onClick={() => setLomba((cur) => (on ? cur.filter((x) => x !== l) : [...cur, l]))}
-                  style={{ fontFamily: BC, fontWeight: 700, fontSize: 14, letterSpacing: 2, padding: "11px 18px", cursor: "pointer", background: on ? O : "#262626", color: on ? "#fff" : "#ccc", border: `1px solid ${on ? O : "#555"}`, transition: "background .2s, color .2s" }}
+                  onClick={() => { if (!lockedLomba) setLomba((cur) => (on ? cur.filter((x) => x !== l) : [...cur, l])) }}
+                  style={{ fontFamily: BC, fontWeight: 700, fontSize: 14, letterSpacing: 2, padding: "11px 18px", cursor: lockedLomba ? "not-allowed" : "pointer", opacity: lockedLomba ? 0.55 : 1, background: on ? O : "#262626", color: on ? "#fff" : "#ccc", border: `1px solid ${on ? O : "#555"}`, transition: "background .2s, color .2s" }}
                 >
                   {on ? "✓ " : ""}
                   {l.toUpperCase()}
@@ -1154,10 +1986,10 @@ function RegistrationForm({
 export const smallBtn: React.CSSProperties = { fontFamily: BC, fontWeight: 800, fontSize: 13, letterSpacing: 2.5, padding: "10px 20px", cursor: "pointer" }
 export const cardStyle: React.CSSProperties = { background: "#2d2d2d", border: "1px solid #4a4a4a" }
 
-export function Chip({ children, tone = "orange" }: { children: React.ReactNode; tone?: "orange" | "green" | "gray" | "red" }) {
+export function Chip({ children, tone = "orange", title }: { children: React.ReactNode; tone?: "orange" | "green" | "gray" | "red"; title?: string }) {
   const c = { orange: ["rgba(255,109,0,0.25)", "#fff"], green: ["rgba(102,187,106,0.22)", "#a5d6a7"], gray: ["#3a3a3a", "#bbb"], red: ["rgba(239,83,80,0.22)", "#ef9a9a"] }[tone]
   return (
-    <span style={{ fontFamily: BC, fontWeight: 800, fontSize: 11, letterSpacing: 2, color: c[1], background: c[0], padding: "3px 10px", whiteSpace: "nowrap" }}>
+    <span title={title || undefined} style={{ fontFamily: BC, fontWeight: 800, fontSize: 11, letterSpacing: 2, color: c[1], background: c[0], padding: "3px 10px", whiteSpace: "nowrap" }}>
       {children}
     </span>
   )
@@ -1249,34 +2081,36 @@ function ParticipantList({
                   )}{" "}
                   · Kaos {r.ukuran ? <strong style={{ color: "#fff" }}>{r.ukuran}</strong> : <span style={{ color: "#ff8a65" }}>belum dipilih</span>}
                 </div>
+                {verdictText(r.status, r.verifiedBy, r.verifiedAt) && (
+                  <div style={{ fontFamily: BB, fontSize: 13, color: "#ddd", marginTop: 8 }}>{verdictText(r.status, r.verifiedBy, r.verifiedAt)}</div>
+                )}
                 {r.status === ST.no && r.adminNote && (
                   <div style={{ fontFamily: BB, fontSize: 13, color: "#ef9a9a", marginTop: 8 }}>Alasan penolakan: {r.adminNote}</div>
+                )}
+                {isLocked(r.status) && (
+                  <div style={{ fontFamily: BB, fontSize: 13, color: "#ffb74d", marginTop: 8 }}>{LOCK_MSG}</div>
                 )}
                 {r.lomba?.length > 0 && (
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
                     {r.lomba.map((l) => {
                       const ls = r.lombaStatus?.[l]
                       return (
-                        <Chip key={l} tone={ls ? statusTone(ls.status) : "gray"}>
+                        <Chip key={l} tone={ls ? statusTone(ls.status) : "gray"} title={verdictText(ls?.status, ls?.by, ls?.at)}>
                           {l.toUpperCase()}{ls?.status === ST.ok ? " ✓" : ls?.status === ST.no ? " ✕" : ""}
                         </Chip>
                       )
                     })}
                   </div>
                 )}
-                {r.akomodasi && (r.akomodasi.roomId || r.akomodasi.transportId) && (() => {
-                  const room = read<Room[]>(ROOM_KEY, []).find((x) => x.id === r.akomodasi?.roomId)
-                  const hotel = read<Hotel[]>(HOTEL_KEY, []).find((h) => h.id === room?.hotelId)
-                  const tr = read<Trans[]>(TRANS_KEY, []).find((x) => x.id === r.akomodasi?.transportId)
-                  return (
-                    <div style={{ fontFamily: BB, fontSize: 13, color: "#ccc", marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                      <StatusChip s={r.akomodasi.status} />
-                      {room && <span>Hotel: <strong style={{ color: "#fff" }}>{hotel?.name} · {room.name}</strong></span>}
-                      {tr && <span>Transport: <strong style={{ color: "#fff" }}>{tr.name} ({tr.route}, {new Date(tr.depart).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })})</strong></span>}
-                    </div>
-                  )
-                })()}
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 14 }}>
+                {r.akomodasi && (r.akomodasi.roomId || r.akomodasi.transportId) && (
+                  <div style={{ fontFamily: BB, fontSize: 13, color: "#ccc", marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    <StatusChip s={r.akomodasi.status} />
+                    {r.akomodasi.roomName && <span>Hotel: <strong style={{ color: "#fff" }}>{r.akomodasi.hotelName} · {r.akomodasi.roomName}</strong></span>}
+                    {r.akomodasi.transportName && <span>Transport: <strong style={{ color: "#fff" }}>{r.akomodasi.transportName} ({r.akomodasi.route}, {r.akomodasi.depart ? new Date(r.akomodasi.depart).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" }) : ""})</strong></span>}
+                    {verdictText(r.akomodasi.status, r.akomodasi.by, r.akomodasi.at) && <span>{verdictText(r.akomodasi.status, r.akomodasi.by, r.akomodasi.at)}</span>}
+                  </div>
+                )}
+                {!isLocked(r.status) && <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 14 }}>
                   <button className="tks-btn" onClick={() => onEdit(r)} style={{ ...btn, color: "#fff", background: O, border: "none" }}>UBAH</button>
                   {confirmId === r.id ? (
                     <>
@@ -1287,7 +2121,7 @@ function ParticipantList({
                   ) : (
                     <button className="tks-btn" onClick={() => setConfirmId(r.id)} style={{ ...btn, color: "#ddd", background: "none", border: "1px solid #666" }}>HAPUS</button>
                   )}
-                </div>
+                </div>}
               </div>
             </article>
           ))}
@@ -1366,7 +2200,7 @@ function PaymentsTab({ user, regs, pays, refresh }: { user: User; regs: Registra
     }
   }
 
-  const submit = (ev: React.FormEvent) => {
+  const submit = async (ev: React.FormEvent) => {
     ev.preventDefault()
     const e: Record<string, string> = {}
     const nominal = Number(amount.replace(/\D/g, ""))
@@ -1376,21 +2210,21 @@ function PaymentsTab({ user, regs, pays, refresh }: { user: User; regs: Registra
     setErrors(e)
     if (Object.keys(e).length) return
     try {
-      upsert<Payment>(PAY_KEY, { id: randomId(), owner: user.email, file: file!, amount: nominal, date, note: note.trim(), regIds: [], createdAt: new Date().toISOString() })
+      await savePayment(file!, nominal, date, note.trim())
       setFile(null)
       setAmount("")
       setNote("")
       setMsg("Bukti pembayaran tersimpan. Pilih peserta yang dicakup pembayaran ini pada kartu di bawah.")
-      refresh()
-    } catch {
-      setErrors({ file: "Penyimpanan penuh. Gunakan berkas yang lebih kecil." })
+      await refresh()
+    } catch (error) {
+      setErrors({ file: (error as Error).message })
     }
   }
 
   const toggle = (p: Payment, regId: string) => {
+    if (isLocked(p.status)) return
     const regIds = p.regIds.includes(regId) ? p.regIds.filter((x) => x !== regId) : [...p.regIds, regId]
-    upsert<Payment>(PAY_KEY, { ...p, regIds })
-    refresh()
+    void setPaymentParticipants(p.id, regIds).then(() => refresh()).catch((error: Error) => setErrors({ file: error.message }))
   }
 
   const stat = (k: string, v: string, hl = false) => (
@@ -1447,9 +2281,13 @@ function PaymentsTab({ user, regs, pays, refresh }: { user: User; regs: Registra
                     <StatusChip s={p.status} />
                   </span>
                 </div>
+                {verdictText(p.status, p.verifiedBy, p.verifiedAt) && (
+                  <div style={{ fontFamily: BB, fontSize: 13, color: "#ddd", margin: "4px 0" }}>{verdictText(p.status, p.verifiedBy, p.verifiedAt)}</div>
+                )}
                 {p.status === ST.no && p.adminNote && (
                   <div style={{ fontFamily: BB, fontSize: 13, color: "#ef9a9a", margin: "4px 0" }}>Alasan penolakan: {p.adminNote}</div>
                 )}
+                {isLocked(p.status) && <div style={{ fontFamily: BB, fontSize: 13, color: "#ffb74d", margin: "4px 0" }}>{LOCK_MSG}</div>}
                 <div style={{ fontFamily: BC, fontWeight: 800, fontSize: 28, color: "#fff", letterSpacing: 1 }}>{rupiah(p.amount)}</div>
                 <div style={{ fontFamily: BB, fontSize: 14, color: "#ccc", margin: "4px 0 16px" }}>
                   <FileLink f={p.file} /> <span style={{ color: "#888" }}>({fmtSize(p.file.size)})</span>
@@ -1474,7 +2312,7 @@ function PaymentsTab({ user, regs, pays, refresh }: { user: User; regs: Registra
                       const on = p.regIds.includes(r.id)
                       return (
                         <label key={r.id} style={{ display: "flex", gap: 10, alignItems: "center", padding: "8px 10px", background: on ? "rgba(255,109,0,0.14)" : "#262626", border: `1px solid ${on ? O : "#444"}`, fontFamily: BB, fontSize: 14, color: other ? "#777" : "#eee", cursor: other ? "not-allowed" : "pointer" }}>
-                          <input type="checkbox" checked={on} disabled={!!other || p.status === ST.ok} onChange={() => toggle(p, r.id)} style={{ accentColor: O, width: 16, height: 16, flexShrink: 0 }} />
+                          <input type="checkbox" checked={on} disabled={!!other || isLocked(p.status)} onChange={() => toggle(p, r.id)} style={{ accentColor: O, width: 16, height: 16, flexShrink: 0 }} />
                           <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.nama}</span>
                           {other && <span style={{ marginLeft: "auto", fontSize: 11, whiteSpace: "nowrap" }}>Bukti #{other}</span>}
                         </label>
@@ -1484,7 +2322,7 @@ function PaymentsTab({ user, regs, pays, refresh }: { user: User; regs: Registra
                 )}
 
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 16 }}>
-                  {p.status !== ST.ok && <DeleteControl id={p.id} confirmId={confirmId} setConfirmId={setConfirmId} label="Hapus bukti ini?" onDelete={() => { removeById<Payment>(PAY_KEY, p.id); setConfirmId(null); refresh() }} />}
+                  {!isLocked(p.status) && <DeleteControl id={p.id} confirmId={confirmId} setConfirmId={setConfirmId} label="Hapus bukti ini?" onDelete={() => { void deletePayment(p.id).then(() => { setConfirmId(null); return refresh() }) }} />}
                 </div>
               </article>
             )
@@ -1510,16 +2348,17 @@ function DocsTab({ user, docs, refresh }: { user: User; docs: Doc[]; refresh: ()
     }
   }
 
-  const submit = (ev: React.FormEvent) => {
+  const submit = async (ev: React.FormEvent) => {
     ev.preventDefault()
     if (!file) return setError("Unggah berkas surat tugas.")
     try {
-      upsert<Doc>(DOC_KEY, { id: randomId(), owner: user.email, file, note: note.trim(), createdAt: new Date().toISOString() })
+      await saveSurat(file, note.trim())
       setFile(null)
       setNote("")
-      refresh()
-    } catch {
-      setError("Penyimpanan penuh. Gunakan berkas yang lebih kecil.")
+      setError("")
+      await refresh()
+    } catch (error) {
+      setError((error as Error).message)
     }
   }
 
@@ -1549,12 +2388,14 @@ function DocsTab({ user, docs, refresh }: { user: User; docs: Doc[]; refresh: ()
               </span>
               <div style={{ flex: 1, minWidth: 200 }}>
                 <div style={{ fontFamily: BC, fontWeight: 700, fontSize: 11, letterSpacing: 2.5, color: O, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>SURAT TUGAS #{i + 1} · {fmtDate(d.createdAt)} <StatusChip s={d.status} /></div>
+                {verdictText(d.status, d.verifiedBy, d.verifiedAt) && <div style={{ fontFamily: BB, fontSize: 13, color: "#ddd" }}>{verdictText(d.status, d.verifiedBy, d.verifiedAt)}</div>}
                 {d.status === ST.no && d.adminNote && <div style={{ fontFamily: BB, fontSize: 13, color: "#ef9a9a" }}>Alasan penolakan: {d.adminNote}</div>}
+                {isLocked(d.status) && <div style={{ fontFamily: BB, fontSize: 13, color: "#ffb74d" }}>{LOCK_MSG}</div>}
                 <FileLink f={d.file} /> <span style={{ fontFamily: BB, fontSize: 13, color: "#888" }}>({fmtSize(d.file.size)})</span>
                 {d.note && <div style={{ fontFamily: BB, fontSize: 14, color: "#ccc", marginTop: 2 }}>{d.note}</div>}
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                {d.status !== ST.ok && <DeleteControl id={d.id} confirmId={confirmId} setConfirmId={setConfirmId} label="Hapus surat ini?" onDelete={() => { removeById<Doc>(DOC_KEY, d.id); setConfirmId(null); refresh() }} />}
+                {!isLocked(d.status) && <DeleteControl id={d.id} confirmId={confirmId} setConfirmId={setConfirmId} label="Hapus surat ini?" onDelete={() => { void deleteSurat(d.id).then(() => { setConfirmId(null); return refresh() }).catch((error: Error) => setError(error.message)) }} />}
               </div>
             </article>
           ))}

@@ -1,15 +1,14 @@
 import React, { useState } from "react"
 import {
-  read,
-  write,
-  randomId,
-  upsert,
-  removeById,
-  REG_KEY,
-  TRAVEL_KEY,
+  saveMedical,
+  saveTravelGroup,
+  deleteTravelGroup,
   Field,
   PrimaryButton,
   Banner,
+  isLocked,
+  LOCK_MSG,
+  verdictText,
   Chip,
   DeleteControl,
   inputStyle,
@@ -45,14 +44,6 @@ const emptyMed = (): Medical => ({
   updatedAt: "",
 })
 
-const patchReg = (id: string, patch: Partial<Registration>) =>
-  write(
-    REG_KEY,
-    read<Registration[]>(REG_KEY, []).map((r) => ((r.id ?? r.regNo) === id ? { ...r, ...patch } : r)),
-  )
-
-const dateColor = { ...inputStyle, colorScheme: "dark" } as React.CSSProperties
-
 // ── Medical history ────────────────────────────────────────────────────────────
 function MedicalForm({ reg, onClose, onSaved }: { reg: Registration; onClose: () => void; onSaved: () => void }) {
   const [m, setM] = useState<Medical>(reg.medical ?? emptyMed())
@@ -60,7 +51,7 @@ function MedicalForm({ reg, onClose, onSaved }: { reg: Registration; onClose: ()
   const [errs, setErrs] = useState<Record<string, string>>({})
   const set = <K extends keyof Medical>(k: K, v: Medical[K]) => setM((s) => ({ ...s, [k]: v }))
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     const er: Record<string, string> = {}
     if (!m.golongan) er.golongan = "Pilih golongan darah."
@@ -70,8 +61,12 @@ function MedicalForm({ reg, onClose, onSaved }: { reg: Registration; onClose: ()
     if (!agree) er.agree = "Centang pernyataan kebenaran data."
     setErrs(er)
     if (Object.keys(er).length) return
-    patchReg(reg.id, { medical: { ...m, kontakTelp: m.kontakTelp.replace(/[\s-]/g, ""), updatedAt: new Date().toISOString() } })
-    onSaved()
+    try {
+      await saveMedical(reg.id, { ...m, kontakTelp: m.kontakTelp.replace(/[\s-]/g, ""), updatedAt: new Date().toISOString() })
+      onSaved()
+    } catch (error) {
+      setErrs({ agree: (error as Error).message })
+    }
   }
 
   const toggle = (p: string) => set("penyakit", m.penyakit.includes(p) ? m.penyakit.filter((x) => x !== p) : [...m.penyakit, p])
@@ -181,10 +176,12 @@ export function MedicalTab({ regs, refresh }: { regs: Registration[]; refresh: (
                   <div style={{ fontFamily: BB, fontSize: 13, color: "#999" }}>
                     {r.jenis} · {r.regNo}
                     {r.medical && <> · Gol. darah {r.medical.golongan}{r.medical.penyakit.length ? ` · ${r.medical.penyakit.join(", ")}` : " · tanpa riwayat penyakit"}{r.medical.alergi && ` · alergi: ${r.medical.alergi}`}</>}
+                    {verdictText(r.status, r.verifiedBy, r.verifiedAt) && <> · {verdictText(r.status, r.verifiedBy, r.verifiedAt)}</>}
                   </div>
+                  {isLocked(r.status) && <div style={{ fontFamily: BB, fontSize: 12, color: "#ffb74d" }}>{LOCK_MSG}</div>}
                 </div>
                 <Chip tone={r.medical ? "green" : "gray"}>{r.medical ? "SUDAH DIISI" : "BELUM DIISI"}</Chip>
-                <button className="tks-btn" onClick={() => { setSaved(""); setEditId(r.id) }} style={{ ...smallBtn, color: "#fff", background: O, border: "none" }}>
+                <button className="tks-btn" disabled={isLocked(r.status)} onClick={() => { setSaved(""); setEditId(r.id) }} style={{ ...smallBtn, color: "#fff", background: O, border: "none", opacity: isLocked(r.status) ? 0.45 : 1 }}>
                   {r.medical ? "UBAH" : "ISI"}
                 </button>
               </article>
@@ -200,37 +197,48 @@ export function MedicalTab({ regs, refresh }: { regs: Registration[]; refresh: (
 const LOKASI = ["Bandara Soekarno-Hatta", "Bandara Halim Perdanakusuma", "Stasiun Gambir", "Stasiun Pasar Senen", "Pelabuhan Tanjung Priok", "Terminal Pulo Gebang"]
 
 type TForm = Omit<TravelGroup, "id" | "owner" | "createdAt">
-const emptyT = (): TForm => ({ nama: "", regIds: [], lokasiDatang: "", tglDatang: "", lokasiBerangkat: "", tglBerangkat: "", jamBerangkat: "" })
+const emptyT = (): TForm => ({ nama: "", regIds: [], dariDatang: "", lokasiDatang: "", tglDatang: "", jamDatang: "", lokasiBerangkat: "", keBerangkat: "", tglBerangkat: "", jamBerangkat: "" })
 
 function TravelForm({ user, regs, groups, existing, onClose, onSaved }: { user: User; regs: Registration[]; groups: TravelGroup[]; existing: TravelGroup | null; onClose: () => void; onSaved: () => void }) {
+  const dateColor = { ...inputStyle, colorScheme: "dark" } as React.CSSProperties
   const [f, setF] = useState<TForm>(existing ? { ...existing } : emptyT())
   const [errs, setErrs] = useState<Record<string, string>>({})
   const set = <K extends keyof TForm>(k: K, v: TForm[K]) => setF((s) => ({ ...s, [k]: v }))
   const takenBy = (rid: string) => groups.find((g) => g.id !== existing?.id && g.regIds.includes(rid))
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     const er: Record<string, string> = {}
     if (f.nama.trim().length < 2) er.nama = "Beri nama grup."
     if (!f.regIds.length) er.regIds = "Pilih minimal satu peserta."
+    if (!f.dariDatang.trim()) er.dariDatang = "Wajib diisi."
     if (!f.lokasiDatang.trim()) er.lokasiDatang = "Wajib diisi."
     if (!f.tglDatang) er.tglDatang = "Wajib diisi."
+    if (!f.jamDatang) er.jamDatang = "Wajib diisi."
     if (!f.lokasiBerangkat.trim()) er.lokasiBerangkat = "Wajib diisi."
+    if (!f.keBerangkat.trim()) er.keBerangkat = "Wajib diisi."
     if (!f.tglBerangkat) er.tglBerangkat = "Wajib diisi."
     else if (f.tglDatang && f.tglBerangkat < f.tglDatang) er.tglBerangkat = "Tanggal keberangkatan tidak boleh sebelum kedatangan."
     if (!f.jamBerangkat) er.jamBerangkat = "Wajib diisi."
+    else if (f.tglDatang && f.tglBerangkat === f.tglDatang && f.jamDatang && f.jamBerangkat < f.jamDatang) er.jamBerangkat = "Jam keberangkatan tidak boleh sebelum jam kedatangan pada hari yang sama."
     setErrs(er)
     if (Object.keys(er).length) return
-    upsert<TravelGroup>(TRAVEL_KEY, {
-      ...f,
-      nama: f.nama.trim(),
-      lokasiDatang: f.lokasiDatang.trim(),
-      lokasiBerangkat: f.lokasiBerangkat.trim(),
-      id: existing?.id ?? randomId(),
-      owner: user.email,
-      createdAt: existing?.createdAt ?? new Date().toISOString(),
-    })
-    onSaved()
+    try {
+      await saveTravelGroup({
+        ...f,
+        nama: f.nama.trim(),
+        dariDatang: f.dariDatang.trim(),
+        lokasiDatang: f.lokasiDatang.trim(),
+        lokasiBerangkat: f.lokasiBerangkat.trim(),
+        keBerangkat: f.keBerangkat.trim(),
+        id: existing?.id ?? "",
+        owner: user.email,
+        createdAt: existing?.createdAt ?? new Date().toISOString(),
+      })
+      onSaved()
+    } catch (error) {
+      setErrs({ nama: (error as Error).message })
+    }
   }
 
   const toggle = (id: string) => set("regIds", f.regIds.includes(id) ? f.regIds.filter((x) => x !== id) : [...f.regIds, id])
@@ -264,18 +272,31 @@ function TravelForm({ user, regs, groups, existing, onClose, onSaved }: { user: 
 
       {sectionTitle("KEDATANGAN DI JAKARTA")}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="card-grid">
-        <Field label="Lokasi Kedatangan" htmlFor="tg-ld" error={errs.lokasiDatang}>
+        <Field label="Dari Lokasi" htmlFor="tg-dd" error={errs.dariDatang}>
+          <input id="tg-dd" className="tks-input" style={inputStyle} value={f.dariDatang} onChange={(e) => set("dariDatang", e.target.value)} placeholder="Kota atau bandara asal" />
+        </Field>
+        <Field label="Ke Lokasi" htmlFor="tg-ld" error={errs.lokasiDatang}>
           <input id="tg-ld" list="lokasi-jkt" className="tks-input" style={inputStyle} value={f.lokasiDatang} onChange={(e) => set("lokasiDatang", e.target.value)} placeholder="Bandara, stasiun, terminal…" />
         </Field>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="card-grid">
         <Field label="Tanggal Kedatangan" htmlFor="tg-td" error={errs.tglDatang}>
           <input id="tg-td" type="date" className="tks-input" style={dateColor} value={f.tglDatang} onChange={(e) => set("tglDatang", e.target.value)} />
         </Field>
+        <Field label="Jam Kedatangan" htmlFor="tg-jd" error={errs.jamDatang}>
+          <input id="tg-jd" type="time" className="tks-input" style={dateColor} value={f.jamDatang} onChange={(e) => set("jamDatang", e.target.value)} />
+        </Field>
       </div>
 
-      {sectionTitle("KEBERANGKATAN DARI JAKARTA")}
-      <Field label="Lokasi Keberangkatan" htmlFor="tg-lb" error={errs.lokasiBerangkat}>
-        <input id="tg-lb" list="lokasi-jkt" className="tks-input" style={inputStyle} value={f.lokasiBerangkat} onChange={(e) => set("lokasiBerangkat", e.target.value)} placeholder="Bandara, stasiun, terminal…" />
-      </Field>
+      {sectionTitle("KEPULANGAN DARI JAKARTA")}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="card-grid">
+        <Field label="Dari Lokasi" htmlFor="tg-lb" error={errs.lokasiBerangkat}>
+          <input id="tg-lb" list="lokasi-jkt" className="tks-input" style={inputStyle} value={f.lokasiBerangkat} onChange={(e) => set("lokasiBerangkat", e.target.value)} placeholder="Bandara, stasiun, terminal…" />
+        </Field>
+        <Field label="Ke Lokasi" htmlFor="tg-kb" error={errs.keBerangkat}>
+          <input id="tg-kb" className="tks-input" style={inputStyle} value={f.keBerangkat} onChange={(e) => set("keBerangkat", e.target.value)} placeholder="Kota tujuan pulang" />
+        </Field>
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="card-grid">
         <Field label="Tanggal Keberangkatan" htmlFor="tg-tb" error={errs.tglBerangkat}>
           <input id="tg-tb" type="date" min={f.tglDatang || undefined} className="tks-input" style={dateColor} value={f.tglBerangkat} onChange={(e) => set("tglBerangkat", e.target.value)} />
@@ -332,19 +353,21 @@ export function TravelTab({ user, regs, groups, refresh }: { user: User; regs: R
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, marginBottom: 14 }} className="card-grid">
                   <div style={{ borderLeft: `3px solid ${O}`, paddingLeft: 14, display: "grid", gap: 8 }}>
                     <div style={{ fontFamily: BC, fontWeight: 800, fontSize: 12, letterSpacing: 3, color: O }}>KEDATANGAN</div>
-                    {cell("LOKASI", g.lokasiDatang)}
-                    {cell("TANGGAL", fmtDate(g.tglDatang))}
+                    {cell("DARI", g.dariDatang || "-")}
+                    {cell("KE", g.lokasiDatang)}
+                    {cell("TANGGAL & JAM", `${fmtDate(g.tglDatang)} · ${g.jamDatang}`)}
                   </div>
                   <div style={{ borderLeft: "3px solid #888", paddingLeft: 14, display: "grid", gap: 8 }}>
-                    <div style={{ fontFamily: BC, fontWeight: 800, fontSize: 12, letterSpacing: 3, color: "#bbb" }}>KEBERANGKATAN</div>
-                    {cell("LOKASI", g.lokasiBerangkat)}
+                    <div style={{ fontFamily: BC, fontWeight: 800, fontSize: 12, letterSpacing: 3, color: "#bbb" }}>KEPULANGAN</div>
+                    {cell("DARI", g.lokasiBerangkat)}
+                    {cell("KE", g.keBerangkat || "-")}
                     {cell("TANGGAL & JAM", `${fmtDate(g.tglBerangkat)} · ${g.jamBerangkat}`)}
                   </div>
                 </div>
                 <div style={{ fontFamily: BB, fontSize: 13, color: "#bbb", marginBottom: 14 }}>{members.join(", ") || "Belum ada anggota"}</div>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                   <button className="tks-btn" onClick={() => setEditing(g)} style={{ ...smallBtn, color: "#fff", background: O, border: "none" }}>UBAH</button>
-                  <DeleteControl id={g.id} confirmId={confirmId} setConfirmId={setConfirmId} label="Hapus grup ini?" onDelete={() => { removeById<TravelGroup>(TRAVEL_KEY, g.id); setConfirmId(null); refresh() }} />
+                  <DeleteControl id={g.id} confirmId={confirmId} setConfirmId={setConfirmId} label="Hapus grup ini?" onDelete={() => { void deleteTravelGroup(g.id).then(() => { setConfirmId(null); refresh() }) }} />
                 </div>
               </article>
             )

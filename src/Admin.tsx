@@ -1,19 +1,34 @@
-import React, { useState } from "react"
+import React, { useCallback, useEffect, useState } from "react"
 import {
-  read,
-  write,
-  randomId,
-  upsert,
-  removeById,
-  deleteReg,
-  detachReg,
-  readProof,
   createAccount,
   setUserRole,
   setUserPassword,
   deleteUser,
-  listUsers,
+  listAllPeserta,
+  listAllPayments,
+  listAllSurat,
+  listProfiles,
+  listHotels,
+  listRooms,
+  listTransport,
+  saveHotel,
+  deleteHotel,
+  saveRoom,
+  deleteRoom,
+  saveTransport,
+  deleteTransport,
+  savePenempatan,
+  setPesertaStatus,
+  deletePesertaAdmin,
+  setPaymentStatus,
+  setSuratStatus,
+  setLombaStatus,
+  addPesertaLomba,
+  removePesertaLomba,
   isStaff,
+  isLocked,
+  LOCK_MSG,
+  verdictText,
   ROLE_LABEL,
   SEED_ADMIN,
   ST,
@@ -34,12 +49,6 @@ import {
   FEE,
   JENIS,
   LOMBA,
-  REG_KEY,
-  PAY_KEY,
-  DOC_KEY,
-  HOTEL_KEY,
-  ROOM_KEY,
-  TRANS_KEY,
   type Registration,
   type Payment,
   type Doc,
@@ -52,6 +61,7 @@ import {
 } from "@/Account"
 
 import { ScoreAdminTab, scoreStats } from "@/Scoreboard"
+import { TripSchedule } from "@/Trips"
 import { DocumentsTab, docStats } from "@/Documents"
 import { BudgetsTab, BudgetRecapTab, budgetStats } from "@/Budget"
 import { MeetingsTab, TasksTab, secretaryStats } from "@/Secretary"
@@ -73,20 +83,25 @@ type Data = {
   users: StoredUser[]
 }
 
-const allRegs = () => read<Registration[]>(REG_KEY, []).map((r) => ({ ...r, id: r.id ?? r.regNo }))
+const emptyData = (): Data => ({ regs: [], pays: [], docs: [], hotels: [], rooms: [], trans: [], users: [] })
 
-const load = (): Data => ({
-  regs: allRegs(),
-  pays: read<Payment[]>(PAY_KEY, []),
-  docs: read<Doc[]>(DOC_KEY, []),
-  hotels: read<Hotel[]>(HOTEL_KEY, []),
-  rooms: read<Room[]>(ROOM_KEY, []),
-  trans: read<Trans[]>(TRANS_KEY, []),
-  users: listUsers(),
-})
+async function loadAdmin(): Promise<Data> {
+  const [regs, pays, docs, hotels, rooms, trans, users] = await Promise.all([
+    listAllPeserta(),
+    listAllPayments(),
+    listAllSurat(),
+    listHotels(),
+    listRooms(),
+    listTransport(),
+    listProfiles(),
+  ])
+  return { regs, pays, docs, hotels, rooms, trans, users }
+}
 
-const patchReg = (id: string, patch: Partial<Registration>) =>
-  write(REG_KEY, allRegs().map((r) => (r.id === id ? { ...r, ...patch } : r)))
+function run(refresh: () => void | Promise<void>, task: () => Promise<void>, setErr: (message: string) => void) {
+  setErr("")
+  void task().then(() => refresh()).catch((e) => setErr((e as Error).message))
+}
 
 function downloadCsv(name: string, rows: (string | number)[][]) {
   const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n")
@@ -98,33 +113,37 @@ function downloadCsv(name: string, rows: (string | number)[][]) {
 }
 
 // ── Shared widgets ─────────────────────────────────────────────────────────────
-type Verif = { status?: string; note?: string }
+type Verif = { status?: string; note?: string; by?: string; at?: string }
 
-function VerifyControls({ v, onSet }: { v: Verif; onSet: (status: string, note: string) => void }) {
+function VerifyControls({ v, onSet, superuser }: { v: Verif; onSet: (status: string, note: string) => void; superuser: boolean }) {
   const [rejecting, setRejecting] = useState(false)
   const [note, setNote] = useState("")
   const [err, setErr] = useState("")
   const status = v.status ?? ST.wait
+  const locked = isLocked(status)
+  const who = verdictText(status, v.by, v.at)
   return (
     <div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <StatusChip s={status} />
-        {status !== ST.ok && (
+        {!locked && (
           <button className="tks-btn" onClick={() => { setRejecting(false); onSet(ST.ok, "") }} style={{ ...smallBtn, padding: "6px 14px", fontSize: 12, color: "#fff", background: "#2e7d32", border: "none" }}>
             SETUJUI
           </button>
         )}
-        {status !== ST.no && !rejecting && (
+        {!locked && !rejecting && (
           <button className="tks-btn" onClick={() => setRejecting(true)} style={{ ...smallBtn, padding: "6px 14px", fontSize: 12, color: "#fff", background: "#c62828", border: "none" }}>
             TOLAK
           </button>
         )}
-        {status !== ST.wait && (
-          <button className="tks-btn" onClick={() => onSet(ST.wait, "")} style={{ ...smallBtn, padding: "6px 14px", fontSize: 12, color: "#ccc", background: "none", border: "1px solid #666" }}>
-            RESET
+        {locked && superuser && (
+          <button className="tks-btn" onClick={() => onSet(ST.wait, "")} style={{ ...smallBtn, padding: "6px 14px", fontSize: 12, color: "#fff", background: O, border: "none" }}>
+            BUKA AKSES
           </button>
         )}
       </div>
+      {who && <div style={{ fontFamily: BB, fontSize: 13, color: "#ddd", marginTop: 6 }}>{who}</div>}
+      {locked && !superuser && <div style={{ fontFamily: BB, fontSize: 13, color: "#ffb74d", marginTop: 6 }}>{LOCK_MSG}</div>}
       {status === ST.no && v.note && (
         <div style={{ fontFamily: BB, fontSize: 13, color: "#ef9a9a", marginTop: 6 }}>Alasan: {v.note}</div>
       )}
@@ -168,7 +187,7 @@ const Small = ({ children }: { children: React.ReactNode }) => (
 const matches = (q: string, ...vals: (string | undefined)[]) =>
   !q || vals.some((v) => v?.toLowerCase().includes(q.toLowerCase()))
 
-type TabProps = { data: Data; refresh: () => void; me: User }
+type TabProps = { data: Data; refresh: () => void | Promise<void>; me: User }
 
 const ownerName = (d: Data, email: string) => d.users.find((u) => u.email === email)?.name ?? email
 
@@ -229,7 +248,7 @@ function Dashboard({ data, me }: TabProps) {
 }
 
 // ── Registration admin ─────────────────────────────────────────────────────────
-function ParticipantsAdmin({ data, refresh }: TabProps) {
+function ParticipantsAdmin({ data, refresh, me }: TabProps) {
   const [print, setPrint] = useState<CardData[] | null>(null)
   const toCard = (r: Registration): CardData => ({
     key: r.id,
@@ -245,6 +264,7 @@ function ParticipantsAdmin({ data, refresh }: TabProps) {
   const [status, setStatus] = useState("")
   const [jenis, setJenis] = useState("")
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [err, setErr] = useState("")
 
   const list = data.regs
     .filter((r) => (!status || r.status === status) && (!jenis || r.jenis === jenis))
@@ -260,6 +280,7 @@ function ParticipantsAdmin({ data, refresh }: TabProps) {
   return (
     <div>
       <H>DATA PESERTA ({list.length})</H>
+      {err && <Banner tone="error">{err}</Banner>}
       <FilterBar q={q} setQ={setQ} status={status} setStatus={setStatus}>
         <select className="tks-input" aria-label="Filter jenis" style={{ ...inputStyle, width: "auto", padding: "10px 14px" }} value={jenis} onChange={(e) => setJenis(e.target.value)}>
           <option value="">Semua jenis</option>
@@ -292,10 +313,10 @@ function ParticipantsAdmin({ data, refresh }: TabProps) {
                     <br />
                     WA {r.wa || "-"} · Kaos {r.ukuran || "-"} · Lomba: {(r.lomba ?? []).join(", ") || "-"}
                   </div>
-                  <VerifyControls v={{ status: r.status, note: r.adminNote }} onSet={(s, n) => { patchReg(r.id, { status: s, adminNote: n || undefined }); refresh() }} />
+                  <VerifyControls superuser={me.role === "superuser"} v={{ status: r.status, note: r.adminNote, by: r.verifiedBy, at: r.verifiedAt }} onSet={(s, n) => run(refresh, () => setPesertaStatus(r.id, s, n), setErr)} />
                   <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "center", flexWrap: "wrap" }}>
                     <button className="tks-btn" onClick={() => setPrint([toCard(r)])} style={{ ...smallBtn, padding: "8px 14px", fontSize: 12, color: O, background: "none", border: `1px solid ${O}` }}>ID CARD</button>
-                    <DeleteControl id={r.id} confirmId={confirmId} setConfirmId={setConfirmId} label="Hapus peserta ini?" onDelete={() => { deleteReg(r.id); detachReg(r.id); setConfirmId(null); refresh() }} />
+                    {!isLocked(r.status) && <DeleteControl id={r.id} confirmId={confirmId} setConfirmId={setConfirmId} label="Hapus peserta ini?" onDelete={() => { setConfirmId(null); run(refresh, () => deletePesertaAdmin(r.id), setErr) }} />}
                   </div>
                 </div>
               </article>
@@ -307,9 +328,10 @@ function ParticipantsAdmin({ data, refresh }: TabProps) {
   )
 }
 
-function PaymentsAdmin({ data, refresh }: TabProps) {
+function PaymentsAdmin({ data, refresh, me }: TabProps) {
   const [q, setQ] = useState("")
   const [status, setStatus] = useState("")
+  const [err, setErr] = useState("")
   const list = data.pays
     .filter((p) => !status || (p.status ?? ST.wait) === status)
     .filter((p) => matches(q, ownerName(data, p.owner), p.note, p.file.name))
@@ -318,6 +340,7 @@ function PaymentsAdmin({ data, refresh }: TabProps) {
   return (
     <div>
       <H>VERIFIKASI PEMBAYARAN ({list.length})</H>
+      {err && <Banner tone="error">{err}</Banner>}
       <FilterBar q={q} setQ={setQ} status={status} setStatus={setStatus} />
       <p style={{ fontFamily: BB, fontSize: 13, color: "#999", margin: "-8px 0 16px" }}>Total nominal pada daftar: <strong style={{ color: "#fff" }}>{rupiah(total)}</strong></p>
       {list.length === 0 ? <Empty>Belum ada bukti pembayaran.</Empty> : (
@@ -343,7 +366,7 @@ function PaymentsAdmin({ data, refresh }: TabProps) {
                 <div style={{ fontFamily: BB, fontSize: 13, color: "#bbb", marginBottom: 12 }}>
                   Peserta ({names.length}): {names.length ? names.join(", ") : <em>belum dicocokkan oleh ketua kontingen</em>}
                 </div>
-                <VerifyControls v={{ status: p.status, note: p.adminNote }} onSet={(s, n) => { upsert<Payment>(PAY_KEY, { ...p, status: s, adminNote: n || undefined }); refresh() }} />
+                <VerifyControls superuser={me.role === "superuser"} v={{ status: p.status, note: p.adminNote, by: p.verifiedBy, at: p.verifiedAt }} onSet={(s, n) => run(refresh, () => setPaymentStatus(p.id, s, n), setErr)} />
               </article>
             )
           })}
@@ -353,13 +376,15 @@ function PaymentsAdmin({ data, refresh }: TabProps) {
   )
 }
 
-function DocsAdmin({ data, refresh }: TabProps) {
+function DocsAdmin({ data, refresh, me }: TabProps) {
   const [q, setQ] = useState("")
   const [status, setStatus] = useState("")
+  const [err, setErr] = useState("")
   const list = data.docs.filter((d) => !status || (d.status ?? ST.wait) === status).filter((d) => matches(q, ownerName(data, d.owner), d.note, d.file.name))
   return (
     <div>
       <H>VERIFIKASI SURAT TUGAS ({list.length})</H>
+      {err && <Banner tone="error">{err}</Banner>}
       <FilterBar q={q} setQ={setQ} status={status} setStatus={setStatus} />
       {list.length === 0 ? <Empty>Belum ada surat tugas.</Empty> : (
         <div style={{ display: "grid", gap: 12 }}>
@@ -369,7 +394,7 @@ function DocsAdmin({ data, refresh }: TabProps) {
               <div style={{ margin: "4px 0 12px", fontFamily: BB, fontSize: 14, color: "#ccc" }}>
                 <FileLink f={d.file} /> ({fmtSize(d.file.size)}){d.note && <> · {d.note}</>}
               </div>
-              <VerifyControls v={{ status: d.status, note: d.adminNote }} onSet={(s, n) => { upsert<Doc>(DOC_KEY, { ...d, status: s, adminNote: n || undefined }); refresh() }} />
+              <VerifyControls superuser={me.role === "superuser"} v={{ status: d.status, note: d.adminNote, by: d.verifiedBy, at: d.verifiedAt }} onSet={(s, n) => run(refresh, () => setSuratStatus(d.id, s, n), setErr)} />
             </article>
           ))}
         </div>
@@ -379,33 +404,31 @@ function DocsAdmin({ data, refresh }: TabProps) {
 }
 
 // ── Race admin ─────────────────────────────────────────────────────────────────
-function RaceAdmin({ data, refresh }: TabProps) {
+function RaceAdmin({ data, refresh, me }: TabProps) {
   const [race, setRace] = useState<string>(LOMBA[0])
   const [add, setAdd] = useState("")
+  const [err, setErr] = useState("")
   const entries = data.regs.filter((r) => r.lomba?.includes(race))
-  const candidates = data.regs.filter((r) => !r.lomba?.includes(race))
+  const candidates = data.regs.filter((r) => !r.lomba?.includes(race) && !isLocked(r.status))
   const statusOf = (r: Registration, l: string) => r.lombaStatus?.[l]?.status ?? ST.wait
 
   const setStatus = (r: Registration, s: string, note: string) => {
-    patchReg(r.id, { lombaStatus: { ...r.lombaStatus, [race]: { status: s, note: note || undefined } } })
-    refresh()
+    run(refresh, () => setLombaStatus(r.id, race, s, note), setErr)
   }
   const remove = (r: Registration) => {
-    const { [race]: _drop, ...rest } = r.lombaStatus ?? {}
-    patchReg(r.id, { lomba: (r.lomba ?? []).filter((x) => x !== race), lombaStatus: rest })
-    refresh()
+    run(refresh, () => removePesertaLomba(r.id, race), setErr)
   }
   const addEntry = () => {
-    const r = data.regs.find((x) => x.id === add)
-    if (!r) return
-    patchReg(r.id, { lomba: [...(r.lomba ?? []), race] })
+    const pesertaId = add
+    if (!pesertaId) return
     setAdd("")
-    refresh()
+    run(refresh, () => addPesertaLomba(pesertaId, race), setErr)
   }
 
   return (
     <div>
       <H>VERIFIKASI PESERTA LOMBA</H>
+      {err && <Banner tone="error">{err}</Banner>}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 24 }}>
         {LOMBA.map((l) => {
           const es = data.regs.filter((r) => r.lomba?.includes(l))
@@ -441,8 +464,8 @@ function RaceAdmin({ data, refresh }: TabProps) {
                   <StatusChip s={r.status} />
                 </div>
                 <div style={{ fontFamily: BB, fontSize: 13, color: "#bbb", margin: "2px 0 8px" }}>Kontingen {ownerName(data, r.email)} · {r.gereja} · WA {r.wa || "-"}</div>
-                <VerifyControls v={r.lombaStatus?.[race] ?? {}} onSet={(s, n) => setStatus(r, s, n)} />
-                <button className="tks-btn" onClick={() => remove(r)} style={{ ...smallBtn, marginTop: 8, padding: "6px 14px", fontSize: 12, color: "#ccc", background: "none", border: "1px solid #666" }}>KELUARKAN DARI LOMBA</button>
+                <VerifyControls superuser={me.role === "superuser"} v={r.lombaStatus?.[race] ?? {}} onSet={(s, n) => setStatus(r, s, n)} />
+                {!isLocked(r.status) && !isLocked(statusOf(r, race)) && <button className="tks-btn" onClick={() => remove(r)} style={{ ...smallBtn, marginTop: 8, padding: "6px 14px", fontSize: 12, color: "#ccc", background: "none", border: "1px solid #666" }}>KELUARKAN DARI LOMBA</button>}
               </div>
             </article>
           ))}
@@ -466,34 +489,27 @@ function HotelsAdmin({ data, refresh }: TabProps) {
   const addHotel = (e: React.FormEvent) => {
     e.preventDefault()
     if (!h.name.trim()) return setErr("Nama hotel wajib diisi.")
-    upsert<Hotel>(HOTEL_KEY, { id: randomId(), name: h.name.trim(), address: h.address.trim() })
+    const name = h.name.trim()
+    const address = h.address.trim()
     setH({ name: "", address: "" })
-    setErr("")
-    refresh()
+    run(refresh, () => saveHotel(name, address), setErr)
   }
   const addRoom = (hotelId: string) => {
     const f = roomForm[hotelId] ?? { name: "", type: ROOM_TYPES[0], capacity: "2" }
     const cap = Number(f.capacity)
     if (!f.name.trim() || !(cap > 0)) return setErr("Nama/nomor kamar dan kapasitas (>0) wajib diisi.")
-    upsert<Room>(ROOM_KEY, { id: randomId(), hotelId, name: f.name.trim(), type: f.type, capacity: cap })
+    const name = f.name.trim()
     setRoomForm((s) => ({ ...s, [hotelId]: { name: "", type: f.type, capacity: f.capacity } }))
-    setErr("")
-    refresh()
+    run(refresh, () => saveRoom(hotelId, name, f.type, cap), setErr)
   }
   const delRoom = (id: string) => {
     if (occ(id)) return setErr("Kamar masih terisi peserta. Pindahkan peserta terlebih dahulu.")
-    removeById<Room>(ROOM_KEY, id)
-    refresh()
+    run(refresh, () => deleteRoom(id), setErr)
   }
   const delHotel = (id: string) => {
-    if (data.rooms.some((r) => r.hotelId === id && occ(r.id))) {
-      setConfirmId(null)
-      return setErr("Hotel memiliki kamar yang masih terisi peserta.")
-    }
-    data.rooms.filter((r) => r.hotelId === id).forEach((r) => removeById<Room>(ROOM_KEY, r.id))
-    removeById<Hotel>(HOTEL_KEY, id)
     setConfirmId(null)
-    refresh()
+    if (data.rooms.some((r) => r.hotelId === id && occ(r.id))) return setErr("Hotel memiliki kamar yang masih terisi peserta.")
+    run(refresh, () => deleteHotel(id), setErr)
   }
 
   return (
@@ -553,6 +569,7 @@ function HotelsAdmin({ data, refresh }: TabProps) {
 }
 
 function TransportAdmin({ data, refresh }: TabProps) {
+  const [mode, setMode] = useState<"armada" | "jadwal">("jadwal")
   const empty = { kind: TRANS_KINDS[0], name: "", route: "", depart: "", capacity: "40" }
   const [f, setF] = useState(empty)
   const [err, setErr] = useState("")
@@ -563,15 +580,20 @@ function TransportAdmin({ data, refresh }: TabProps) {
     e.preventDefault()
     const cap = Number(f.capacity)
     if (!f.name.trim() || !f.route.trim() || !f.depart || !(cap > 0)) return setErr("Nama, rute, jadwal berangkat, dan kapasitas wajib diisi.")
-    upsert<Trans>(TRANS_KEY, { id: randomId(), kind: f.kind, name: f.name.trim(), route: f.route.trim(), depart: f.depart, capacity: cap })
+    const next = { kind: f.kind, name: f.name.trim(), route: f.route.trim(), depart: f.depart, capacity: cap }
     setF(empty)
-    setErr("")
-    refresh()
+    run(refresh, () => saveTransport(next.kind, next.name, next.route, next.depart, next.capacity), setErr)
   }
 
   return (
     <div>
       <H>TRANSPORTASI</H>
+      <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
+        {([["jadwal", "JADWAL TRIP"], ["armada", "ARMADA"]] as const).map(([id, label]) => (
+          <button key={id} className="tks-seg" aria-pressed={mode === id} onClick={() => setMode(id)} style={{ fontFamily: BC, fontWeight: 700, fontSize: 14, letterSpacing: 2, padding: "10px 16px", cursor: "pointer", background: mode === id ? O : "#262626", color: mode === id ? "#fff" : "#ccc", border: `1px solid ${mode === id ? O : "#555"}` }}>{label}</button>
+        ))}
+      </div>
+      {mode === "jadwal" ? <TripSchedule trans={data.trans} /> : <>
       {err && <Banner tone="error">{err}</Banner>}
       <form onSubmit={submit} noValidate style={{ ...cardStyle, padding: 20, marginBottom: 24 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="card-grid">
@@ -594,19 +616,21 @@ function TransportAdmin({ data, refresh }: TabProps) {
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <DeleteControl id={t.id} confirmId={confirmId} setConfirmId={setConfirmId} label="Hapus transportasi?" onDelete={() => {
-                  if (occ(t.id)) { setConfirmId(null); return setErr("Transportasi masih memiliki penumpang.") }
-                  removeById<Trans>(TRANS_KEY, t.id); setConfirmId(null); refresh()
+                  setConfirmId(null)
+                  if (occ(t.id)) return setErr("Transportasi masih memiliki penumpang.")
+                  run(refresh, () => deleteTransport(t.id), setErr)
                 }} />
               </div>
             </article>
           ))}
         </div>
       )}
+      </>}
     </div>
   )
 }
 
-function PlacementAdmin({ data, refresh }: TabProps) {
+function PlacementAdmin({ data, refresh, me }: TabProps) {
   const [q, setQ] = useState("")
   const [status, setStatus] = useState("")
   const [err, setErr] = useState("")
@@ -619,9 +643,8 @@ function PlacementAdmin({ data, refresh }: TabProps) {
     .filter((r) => matches(q, r.nama, r.regNo, r.gereja, ownerName(data, r.email)))
 
   const save = (r: Registration, patch: Partial<NonNullable<Registration["akomodasi"]>>) => {
-    setErr("")
-    patchReg(r.id, { akomodasi: { status: accStatus(r), ...r.akomodasi, ...patch } })
-    refresh()
+    const next = { status: accStatus(r), ...r.akomodasi, ...patch }
+    run(refresh, () => savePenempatan(r.id, { roomId: next.roomId, transportId: next.transportId, status: next.status, note: next.note }), setErr)
   }
 
   return (
@@ -647,7 +670,7 @@ function PlacementAdmin({ data, refresh }: TabProps) {
                   <div style={{ display: "flex", gap: 6 }}><Chip tone="gray">{r.jenis.toUpperCase()}</Chip><StatusChip s={r.status} /></div>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }} className="card-grid">
-                  <select className="tks-input" aria-label={`Kamar ${r.nama}`} style={{ ...inputStyle, padding: "10px 12px" }} value={a?.roomId ?? ""} onChange={(e) => save(r, { roomId: e.target.value || undefined })}>
+                  <select className="tks-input" aria-label={`Kamar ${r.nama}`} disabled={isLocked(accStatus(r))} style={{ ...inputStyle, padding: "10px 12px" }} value={a?.roomId ?? ""} onChange={(e) => save(r, { roomId: e.target.value || undefined })}>
                     <option value="">— Kamar belum ditentukan —</option>
                     {data.hotels.map((h) => (
                       <optgroup key={h.id} label={h.name}>
@@ -657,14 +680,14 @@ function PlacementAdmin({ data, refresh }: TabProps) {
                       </optgroup>
                     ))}
                   </select>
-                  <select className="tks-input" aria-label={`Transportasi ${r.nama}`} style={{ ...inputStyle, padding: "10px 12px" }} value={a?.transportId ?? ""} onChange={(e) => save(r, { transportId: e.target.value || undefined })}>
+                  <select className="tks-input" aria-label={`Transportasi ${r.nama}`} disabled={isLocked(accStatus(r))} style={{ ...inputStyle, padding: "10px 12px" }} value={a?.transportId ?? ""} onChange={(e) => save(r, { transportId: e.target.value || undefined })}>
                     <option value="">— Transportasi belum ditentukan —</option>
                     {data.trans.map((t) => (
                       <option key={t.id} value={t.id} disabled={transOcc(t.id) >= t.capacity && a?.transportId !== t.id}>{t.name} · {t.route} · {transOcc(t.id)}/{t.capacity}</option>
                     ))}
                   </select>
                 </div>
-                <VerifyControls v={{ status: accStatus(r), note: a?.note }} onSet={(s, n) => {
+                <VerifyControls superuser={me.role === "superuser"} v={{ status: accStatus(r), note: a?.note, by: a?.by, at: a?.at }} onSet={(s, n) => {
                   if (s === ST.ok && !a?.roomId && !a?.transportId) return setErr(`Tentukan kamar atau transportasi untuk ${r.nama} sebelum memverifikasi.`)
                   save(r, { status: s, note: n || undefined })
                 }} />
@@ -685,7 +708,10 @@ function UsersAdmin({ data, refresh, me }: TabProps) {
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [pwFor, setPwFor] = useState<string | null>(null)
   const [pw, setPw] = useState("")
-  const guard = (fn: () => void) => { try { setErr(""); setOk(""); fn(); refresh() } catch (e) { setErr((e as Error).message); setConfirmId(null) } }
+  const guard = (fn: () => void | Promise<void>) => {
+    setErr(""); setOk("")
+    void Promise.resolve().then(fn).then(() => refresh()).catch((e) => { setErr((e as Error).message); setConfirmId(null) })
+  }
 
   const create = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -741,7 +767,10 @@ function UsersAdmin({ data, refresh, me }: TabProps) {
                 <input className="tks-input" aria-label="Kata sandi baru" autoComplete="off" style={{ ...inputStyle, flex: 1, minWidth: 200, padding: "8px 12px" }} value={pw} onChange={(e) => setPw(e.target.value)} placeholder="Kata sandi baru (min. 8, huruf + angka)" />
                 <button className="tks-btn" onClick={async () => {
                   if (pw.length < 8 || !/[A-Za-z]/.test(pw) || !/\d/.test(pw)) return setErr("Kata sandi min. 8 karakter, kombinasi huruf dan angka.")
-                  await setUserPassword(u.id, pw); setPwFor(null); setPw(""); setErr(""); setOk(`Kata sandi ${u.email} diperbarui.`)
+                  try {
+                    const message = await setUserPassword(u.id, pw)
+                    setPwFor(null); setPw(""); setErr(""); setOk(message)
+                  } catch (x) { setOk(""); setErr((x as Error).message) }
                 }} style={{ ...smallBtn, color: "#fff", background: O, border: "none" }}>SIMPAN</button>
               </div>
             )}
@@ -786,8 +815,20 @@ const TABS: TabDef[] = [
 ]
 
 export function AdminPanel({ user }: { user: User }) {
-  const [data, setData] = useState<Data>(load)
-  const refresh = () => setData(load())
+  const [data, setData] = useState<Data>(emptyData)
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState("")
+  const refresh = useCallback(async () => {
+    try {
+      setData(await loadAdmin())
+      setLoadError("")
+    } catch (e) {
+      setLoadError((e as Error).message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+  useEffect(() => { void refresh() }, [refresh])
   const tabs = TABS.filter((t) => t.roles.includes(user.role))
   const [tab, setTab] = useState(tabs[0]?.id)
   const current = tabs.find((t) => t.id === tab) ?? tabs[0]
@@ -844,7 +885,10 @@ export function AdminPanel({ user }: { user: User }) {
             })}
           </nav>
           <div className="reg-content">
-        {current.render({ data, refresh, me: user })}
+        {loadError && <Banner tone="error">{loadError}</Banner>}
+        {loading ? (
+          <div style={{ fontFamily: BB, fontSize: 14, color: "#aaa" }}>Memuat data admin…</div>
+        ) : current.render({ data, refresh, me: user })}
           </div>
         </div>
       </div>

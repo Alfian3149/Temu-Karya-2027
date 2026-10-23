@@ -11,6 +11,7 @@ import {
   smallBtn,
   cardStyle,
   fmtDate,
+  mupelText,
   type Trans,
   type Trip,
   type TripStatus,
@@ -38,7 +39,7 @@ function TripTable({ trip }: { trip: Trip }) {
           <tr key={p.id}>
             <td style={cell}>{i + 1}</td>
             <td style={cell}>{p.nama}</td>
-            <td style={cell}>{p.mupel}</td>
+            <td style={cell}>{mupelText(p.mupel)}</td>
             <td style={cell}>{trip.dari || "-"}</td>
             <td style={cell}>{trip.ke || "-"}</td>
             <td style={cell}>{when(trip)}</td>
@@ -131,7 +132,7 @@ export function TripSchedule({ trans }: { trans: Trans[] }) {
     .filter((trip) => !jenis || trip.jenis === jenis)
     .filter((trip) => !status || trip.status === status)
     .filter((trip) => {
-      const blob = [trip.nama, trip.dari, trip.ke, trip.organizer, trip.kendaraan, ...trip.passengers.flatMap((p) => [p.nama, p.mupel])].join(" ").toLowerCase()
+      const blob = [trip.nama, trip.dari, trip.ke, trip.organizer, trip.kendaraan, ...trip.passengers.flatMap((p) => [p.nama, p.mupel, mupelText(p.mupel)])].join(" ").toLowerCase()
       return !q || blob.includes(q.toLowerCase())
     })
 

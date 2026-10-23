@@ -9,7 +9,7 @@ const O = "#FF6D00"
 
 // ── Storage + auth ─────────────────────────────────────────────────────────────
 export type Role = "user" | "superuser" | "reg_admin" | "race_admin" | "accom_admin" | "bendahara" | "sekretaris" | "panitia_inti"
-export type User = { id: string; name: string; email: string; role: Role }
+export type User = { id: string; name: string; email: string; role: Role; mupel: string; whatsapp: string; gereja: string }
 export const ROLE_LABEL: Record<Role, string> = {
   user: "Ketua Kontingen",
   superuser: "Superuser",
@@ -62,10 +62,24 @@ export function newUuid() {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
 
+const PROFIL_FIELDS = "id, nama, email, peran, mupel, whatsapp, gereja"
+
+function rowToUser(data: { id: string; nama: string; email: string; peran: string; mupel: string | null; whatsapp: string | null; gereja: string | null }): User {
+  return {
+    id: data.id,
+    name: data.nama,
+    email: data.email,
+    role: data.peran as Role,
+    mupel: data.mupel ?? "",
+    whatsapp: data.whatsapp ?? "",
+    gereja: data.gereja ?? "",
+  }
+}
+
 async function profilToUser(id: string): Promise<User> {
-  const { data, error } = await supabase.from("profil").select("id, nama, email, peran").eq("id", id).single()
+  const { data, error } = await supabase.from("profil").select(PROFIL_FIELDS).eq("id", id).single()
   if (error) throw new Error(error.message)
-  return { id: data.id, name: data.nama, email: data.email, role: data.peran as Role }
+  return rowToUser(data)
 }
 
 export const SEED_ADMIN = { email: "admin@tks2027.id", password: "Admin2027!" }
@@ -81,6 +95,9 @@ async function seedSuperuser() {
       name: "Superuser",
       email: SEED_ADMIN.email,
       role: "superuser",
+      mupel: "",
+      whatsapp: "",
+      gereja: "",
       salt,
       hash: await hashPassword(SEED_ADMIN.password, salt),
     } as StoredUser,
@@ -158,6 +175,70 @@ export async function setUserPassword(id: string, password: string) {
   return `Tautan reset kata sandi dikirim ke ${profil.email}.`
 }
 
+export const MUPEL = [
+  { code: "BABEL", name: "Bangka Belitung" },
+  { code: "BALI-NTB", name: "Bali dan Nusa Tenggara Barat" },
+  { code: "BANTEN", name: "Banten" },
+  { code: "BEKASI", name: "Bekasi" },
+  { code: "JABAR I", name: "Jawa Barat I" },
+  { code: "JABAR II", name: "Jawa Barat II" },
+  { code: "JAKBAR", name: "Jakarta Barat" },
+  { code: "JAKPUS", name: "Jakarta Pusat" },
+  { code: "JAKSEL", name: "Jakarta Selatan" },
+  { code: "JAKTIM", name: "Jakarta Timur" },
+  { code: "JAKUT", name: "Jakarta Utara" },
+  { code: "JAMBI", name: "Jambi" },
+  { code: "JATENG-DIY", name: "Jawa Tengah dan D.I. Yogyakarta" },
+  { code: "JATIM", name: "Jawa Timur" },
+  { code: "KALBAR", name: "Kalimantan Barat" },
+  { code: "KALSELTENG", name: "Kalimantan Selatan dan Kalimantan Tengah" },
+  { code: "KALTARA-BERKAT", name: "Kalimantan Utara dan Berau/Kaltim bagian utara" },
+  { code: "KALTIM I", name: "Kalimantan Timur I" },
+  { code: "KALTIM II", name: "Kalimantan Timur II" },
+  { code: "KEPRI", name: "Kepulauan Riau" },
+  { code: "LAMPUNG", name: "Lampung" },
+  { code: "SULSELBARA", name: "Sulawesi Selatan, Sulawesi Barat, dan Sulawesi Tenggara" },
+  { code: "SUMBAR-RIAU", name: "Sumatera Barat dan Riau" },
+  { code: "SUMSEL", name: "Sumatera Selatan" },
+  { code: "SUMUT-ACEH", name: "Sumatera Utara dan Aceh" },
+] as const
+
+export const isMupel = (value: string) => MUPEL.some((item) => item.code === value)
+export const mupelText = (code: string) => {
+  const row = MUPEL.find((item) => item.code === code)
+  return row ? `${row.code} (${row.name})` : code
+}
+
+const WA_RE = /^(\+?62|0)8\d{7,12}$/
+export const normalizeWa = (value: string) => value.replace(/[\s-]/g, "")
+
+export type ProfileInput = { name: string; mupel: string; whatsapp: string; gereja: string; password?: string }
+
+export async function updateOwnProfile(input: ProfileInput) {
+  const session = await requireUser()
+  const name = input.name.trim()
+  const mupel = input.mupel.trim()
+  const gereja = input.gereja.trim()
+  const whatsapp = normalizeWa(input.whatsapp)
+  if (name.length < 3) throw new Error("Nama minimal 3 karakter.")
+  if (!isMupel(mupel)) throw new Error("Pilih asal mupel.")
+  if (whatsapp && !WA_RE.test(whatsapp)) throw new Error("Masukkan nomor WhatsApp yang valid, contoh 081234567890.")
+  if (gereja && gereja.length < 2) throw new Error("Nama gereja minimal 2 karakter.")
+  const password = input.password?.trim()
+  if (password && (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password)))
+    throw new Error("Kata sandi minimal 8 karakter, kombinasi huruf dan angka.")
+  const { error } = await supabase
+    .from("profil")
+    .update({ nama: name, mupel, whatsapp: whatsapp || null, gereja: gereja || null })
+    .eq("id", session.id)
+  throwIf(error)
+  if (password) {
+    const { error: passwordError } = await supabase.auth.updateUser({ password })
+    throwIf(passwordError)
+  }
+  return profilToUser(session.id)
+}
+
 export type Auth = ReturnType<typeof useAuth>
 
 export function useAuth() {
@@ -188,21 +269,27 @@ export function useAuth() {
     }
   }, [])
 
-  const signup = async (name: string, email: string, password: string) => {
+  const signup = async (name: string, email: string, password: string, mupel: string) => {
     const mail = email.trim().toLowerCase()
+    const asal = mupel.trim()
+    if (!isMupel(asal)) throw new Error("Pilih asal mupel.")
     const { data, error } = await supabase.auth.signUp({
       email: mail,
       password,
-      options: { data: { nama: name.trim() } },
+      options: { data: { nama: name.trim(), mupel: asal } },
     })
     if (error) {
       if (/already registered|already exists/i.test(error.message)) throw new Error("Email sudah terdaftar. Silakan masuk.")
       throw new Error(error.message)
     }
     if (!data.session || !data.user) throw new Error("Akun dibuat. Periksa email untuk konfirmasi, lalu masuk.")
-    const { error: profileError } = await supabase.from("profil").update({ nama: name.trim() }).eq("id", data.user.id)
+    const { error: profileError } = await supabase.from("profil").update({ nama: name.trim(), mupel: asal }).eq("id", data.user.id)
     if (profileError) throw new Error(profileError.message)
     setUser(await profilToUser(data.user.id))
+  }
+
+  const updateProfile = async (input: ProfileInput) => {
+    setUser(await updateOwnProfile(input))
   }
 
   const login = async (email: string, password: string, _remember: boolean) => {
@@ -226,7 +313,7 @@ export function useAuth() {
     setUser(null)
   }
 
-  return { user, signup, login, logout, resetPassword }
+  return { user, signup, login, logout, resetPassword, updateProfile }
 }
 
 // ── Registration data ──────────────────────────────────────────────────────────
@@ -590,6 +677,10 @@ async function syncLomba(pesertaId: string, lomba: string[]) {
 
 export async function savePeserta(reg: Registration) {
   const user = await requireUser()
+  const { data: profil, error: profilError } = await supabase.from("profil").select("peran, mupel").eq("id", user.id).single()
+  throwIf(profilError)
+  const mupel = profil?.peran === "user" ? String(profil.mupel ?? "") : reg.mupel
+  if (profil?.peran === "user" && !isMupel(mupel)) throw new Error("Isi asal mupel pada profil sebelum mendaftarkan peserta.")
   const editing = Boolean(reg.regNo && reg.id && isUuid(reg.id))
   const row = {
     nama: reg.nama,
@@ -598,7 +689,7 @@ export async function savePeserta(reg: Registration) {
     tanggal_lahir: reg.tanggal,
     jenis_kelamin: reg.gender,
     gereja: reg.gereja,
-    mupel: reg.mupel,
+    mupel,
     whatsapp: reg.wa,
     ukuran_kaos: reg.ukuran,
   }
@@ -1050,13 +1141,10 @@ export async function deleteSurat(id: string) {
 }
 
 export async function listProfiles(): Promise<StoredUser[]> {
-  const { data, error } = await supabase.from("profil").select("id, nama, email, peran").order("nama")
+  const { data, error } = await supabase.from("profil").select(PROFIL_FIELDS).order("nama")
   throwIf(error)
   return (data ?? []).map((row) => ({
-    id: row.id,
-    name: row.nama,
-    email: row.email,
-    role: row.peran as Role,
+    ...rowToUser(row),
     salt: "",
     hash: "",
   }))
@@ -1348,6 +1436,38 @@ export function PageShell({ children }: { children: React.ReactNode }) {
   )
 }
 
+export function MupelSelect({
+  id,
+  value,
+  onChange,
+  disabled,
+  invalid,
+}: {
+  id: string
+  value: string
+  onChange?: (value: string) => void
+  disabled?: boolean
+  invalid?: boolean
+}) {
+  const known = isMupel(value)
+  return (
+    <select
+      id={id}
+      className="tks-input"
+      disabled={disabled}
+      value={value}
+      onChange={(e) => onChange?.(e.target.value)}
+      style={{ ...inputStyle, ...(invalid ? { borderColor: "#ff8a65" } : {}), ...(disabled ? { cursor: "default" } : {}) }}
+    >
+      <option value="">{disabled ? "Asal mupel belum diisi" : "Pilih asal mupel…"}</option>
+      {MUPEL.map((item) => (
+        <option key={item.code} value={item.code}>{item.code} ({item.name})</option>
+      ))}
+      {value && !known && <option value={value}>{value}</option>}
+    </select>
+  )
+}
+
 // ── Login page ─────────────────────────────────────────────────────────────────
 type Mode = "login" | "signup" | "reset"
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -1365,6 +1485,7 @@ export function LoginPage({
 }) {
   const [mode, setMode] = useState<Mode>("login")
   const [name, setName] = useState("")
+  const [mupel, setMupel] = useState("")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [confirm, setConfirm] = useState("")
@@ -1395,6 +1516,7 @@ export function LoginPage({
   const validate = () => {
     const e: Record<string, string> = {}
     if (mode === "signup" && name.trim().length < 3) e.name = "Nama minimal 3 karakter."
+    if (mode === "signup" && !isMupel(mupel)) e.mupel = "Pilih asal mupel."
     if (!EMAIL_RE.test(email.trim())) e.email = "Masukkan alamat email yang valid."
     if (mode === "login") {
       if (!password) e.password = "Kata sandi wajib diisi."
@@ -1431,7 +1553,7 @@ export function LoginPage({
           }
         }
       } else if (mode === "signup") {
-        await auth.signup(name, email, password)
+        await auth.signup(name, email, password, mupel)
         onSuccess()
       } else {
         await auth.resetPassword(email)
@@ -1534,6 +1656,12 @@ export function LoginPage({
               </Field>
             )}
 
+            {mode === "signup" && (
+              <Field label="Asal Mupel" htmlFor="auth-mupel" error={errors.mupel} hint="Wajib. Peserta yang Anda daftarkan memakai mupel ini.">
+                <MupelSelect id="auth-mupel" value={mupel} invalid={!!errors.mupel} onChange={(value) => { setMupel(value); setErrors((prev) => ({ ...prev, mupel: "" })) }} />
+              </Field>
+            )}
+
             <Field label="Email" htmlFor="auth-email" error={errors.email}>
               <input id="auth-email" type="email" className="tks-input" style={{ ...inputStyle, ...err("email") }} value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" placeholder="nama@email.com" />
             </Field>
@@ -1590,6 +1718,111 @@ export function Banner({ tone, children }: { tone: "info" | "ok" | "error"; chil
   )
 }
 
+export function ProfilePage({
+  user,
+  notice,
+  onSave,
+  onBack,
+}: {
+  user: User
+  notice?: string
+  onSave: (input: ProfileInput) => Promise<void>
+  onBack: () => void
+}) {
+  const [name, setName] = useState(user.name)
+  const [mupel, setMupel] = useState(user.mupel)
+  const [whatsapp, setWhatsapp] = useState(user.whatsapp)
+  const [gereja, setGereja] = useState(user.gereja)
+  const [password, setPassword] = useState("")
+  const [confirm, setConfirm] = useState("")
+  const [show, setShow] = useState(false)
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [formError, setFormError] = useState("")
+  const [ok, setOk] = useState("")
+  const [busy, setBusy] = useState(false)
+  const err = (k: string) => (errors[k] ? { borderColor: "#ff8a65" } : {})
+
+  const submit = async (ev: React.FormEvent) => {
+    ev.preventDefault()
+    setFormError("")
+    setOk("")
+    const next: Record<string, string> = {}
+    const wa = normalizeWa(whatsapp)
+    if (name.trim().length < 3) next.name = "Nama minimal 3 karakter."
+    if (!isMupel(mupel)) next.mupel = "Pilih asal mupel."
+    if (wa && !WA_RE.test(wa)) next.whatsapp = "Masukkan nomor WhatsApp yang valid, contoh 081234567890."
+    if (gereja.trim() && gereja.trim().length < 2) next.gereja = "Nama gereja minimal 2 karakter."
+    if (password || confirm) {
+      if (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password))
+        next.password = "Kata sandi minimal 8 karakter, kombinasi huruf dan angka."
+      if (confirm !== password) next.confirm = "Konfirmasi kata sandi tidak cocok."
+    }
+    setErrors(next)
+    if (Object.keys(next).length) {
+      requestAnimationFrame(() => document.querySelector('[role="alert"]')?.scrollIntoView({ block: "center", behavior: "smooth" }))
+      return
+    }
+    setBusy(true)
+    try {
+      await onSave({ name: name.trim(), mupel, whatsapp: wa, gereja: gereja.trim(), password: password || undefined })
+      setPassword("")
+      setConfirm("")
+      setOk("Profil disimpan. Peserta kontingen memakai asal mupel ini.")
+    } catch (error) {
+      setFormError((error as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <PageShell>
+      <div style={{ maxWidth: 720, margin: "0 auto", padding: "56px 24px 96px" }}>
+        <div style={{ fontFamily: BC, fontWeight: 700, fontSize: 12, letterSpacing: 4, color: O, marginBottom: 12 }}>AKUN KONTINGEN</div>
+        <h1 style={{ fontFamily: BC, fontWeight: 800, fontSize: "clamp(36px,5vw,56px)", letterSpacing: 2, lineHeight: 1, color: "#fff", margin: "0 0 12px" }}>EDIT PROFIL</h1>
+        <p style={{ fontFamily: BB, fontSize: 15, color: "#bbb", margin: "0 0 32px", lineHeight: 1.7 }}>
+          Perbarui data ketua kontingen. Asal mupel wajib diisi dan dipakai untuk seluruh peserta yang Anda daftarkan.
+        </p>
+        <form onSubmit={submit} noValidate style={{ background: "#2d2d2d", border: "1px solid #4a4a4a", padding: "36px clamp(20px,4vw,40px)" }}>
+          {notice && !ok && <Banner tone="info">{notice}</Banner>}
+          {ok && <Banner tone="ok">{ok}</Banner>}
+          {formError && <Banner tone="error">{formError}</Banner>}
+          <Field label="Nama Lengkap" htmlFor="p-name" error={errors.name}>
+            <input id="p-name" className="tks-input" style={{ ...inputStyle, ...err("name") }} value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" />
+          </Field>
+          <Field label="Email" htmlFor="p-email" hint="Email akun untuk masuk.">
+            <input id="p-email" className="tks-input" style={{ ...inputStyle, opacity: 0.75 }} value={user.email} readOnly />
+          </Field>
+          <Field label="Asal Gereja" htmlFor="p-gereja" error={errors.gereja}>
+            <input id="p-gereja" className="tks-input" style={{ ...inputStyle, ...err("gereja") }} value={gereja} onChange={(e) => setGereja(e.target.value)} placeholder="Nama jemaat GPIB" />
+          </Field>
+          <Field label="Nomor WhatsApp" htmlFor="p-wa" error={errors.whatsapp} hint="Opsional. Nomor yang dapat dihubungi panitia.">
+            <input id="p-wa" type="tel" inputMode="tel" className="tks-input" style={{ ...inputStyle, ...err("whatsapp") }} value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} placeholder="081234567890" autoComplete="tel" />
+          </Field>
+          <Field label="Asal Mupel" htmlFor="p-mupel" error={errors.mupel} hint="Wajib. Mengubah mupel memperbarui mupel seluruh peserta kontingen ini.">
+            <MupelSelect id="p-mupel" value={mupel} invalid={!!errors.mupel} onChange={(value) => { setMupel(value); setErrors((prev) => ({ ...prev, mupel: "" })) }} />
+          </Field>
+          <Field label="Kata Sandi Baru" htmlFor="p-pass" error={errors.password} hint="Kosongkan jika kata sandi tetap.">
+            <div style={{ position: "relative" }}>
+              <input id="p-pass" type={show ? "text" : "password"} className="tks-input" style={{ ...inputStyle, ...err("password"), paddingRight: 72 }} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" placeholder="••••••••" />
+              <button type="button" onClick={() => setShow(!show)} aria-label={show ? "Sembunyikan kata sandi" : "Tampilkan kata sandi"} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 64, background: "none", border: "none", color: O, fontFamily: BC, fontWeight: 700, fontSize: 12, letterSpacing: 1.5, cursor: "pointer" }}>
+                {show ? "HIDE" : "SHOW"}
+              </button>
+            </div>
+          </Field>
+          <Field label="Konfirmasi Kata Sandi Baru" htmlFor="p-confirm" error={errors.confirm}>
+            <input id="p-confirm" type={show ? "text" : "password"} className="tks-input" style={{ ...inputStyle, ...err("confirm") }} value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" placeholder="••••••••" />
+          </Field>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <PrimaryButton type="submit" disabled={busy} style={{ flex: 1, minWidth: 200 }}>{busy ? "MENYIMPAN…" : "SIMPAN PROFIL"}</PrimaryButton>
+            <button type="button" className="tks-btn" onClick={onBack} style={{ fontFamily: BC, fontWeight: 800, fontSize: 16, letterSpacing: 3, color: "#ddd", background: "none", border: "1px solid #666", padding: "16px 28px", cursor: "pointer" }}>KE REGISTRASI</button>
+          </div>
+        </form>
+      </div>
+    </PageShell>
+  )
+}
+
 // ── Participant registration page ──────────────────────────────────────────────
 type FormState = {
   nama: string
@@ -1620,7 +1853,7 @@ export const fmtDate = (iso: string) =>
 
 type Tab = "peserta" | "medis" | "perjalanan" | "pembayaran" | "surat"
 
-export function RegistrationPage({ user }: { user: User }) {
+export function RegistrationPage({ user, onEditProfile }: { user: User; onEditProfile: () => void }) {
   const [regs, setRegs] = useState<Registration[]>([])
   const [pays, setPays] = useState<Payment[]>([])
   const [docs, setDocs] = useState<Doc[]>([])
@@ -1691,12 +1924,18 @@ export function RegistrationPage({ user }: { user: User }) {
         <div style={{ fontFamily: BC, fontWeight: 700, fontSize: 12, letterSpacing: 4, color: O, marginBottom: 12 }}>
           PENDAFTARAN KONTINGEN
         </div>
-        <h1 style={{ fontFamily: BC, fontWeight: 800, fontSize: "clamp(36px,5vw,56px)", letterSpacing: 2, lineHeight: 1, color: "#fff", margin: "0 0 12px" }}>
-          KONTINGEN {user.name.toUpperCase()}
-        </h1>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 12 }}>
+          <h1 style={{ fontFamily: BC, fontWeight: 800, fontSize: "clamp(36px,5vw,56px)", letterSpacing: 2, lineHeight: 1, color: "#fff", margin: 0 }}>
+            KONTINGEN {user.name.toUpperCase()}
+          </h1>
+          <button type="button" className="tks-btn" onClick={onEditProfile} style={{ ...smallBtn, color: "#fff", background: "none", border: `1px solid ${O}` }}>EDIT PROFIL</button>
+        </div>
         <p style={{ fontFamily: BB, fontSize: 15, color: "#bbb", margin: "0 0 28px", lineHeight: 1.7 }}>
-          Ketua kontingen: <strong style={{ color: "#fff" }}>{user.name}</strong> ({user.email}). Kelola peserta, riwayat medis, jadwal kedatangan dan keberangkatan, bukti pembayaran, dan surat tugas dari satu tempat.
+          Ketua kontingen: <strong style={{ color: "#fff" }}>{user.name}</strong> ({user.email}).
+          {isMupel(user.mupel) ? <> Asal mupel: <strong style={{ color: "#fff" }}>{mupelText(user.mupel)}</strong>.</> : <> Asal mupel belum diisi.</>}
+          {" "}Kelola peserta, riwayat medis, jadwal kedatangan dan keberangkatan, bukti pembayaran, dan surat tugas dari satu tempat.
         </p>
+        {!isMupel(user.mupel) && <Banner tone="info">Isi asal mupel pada profil sebelum menambah peserta. Setiap peserta kontingen memakai mupel yang sama.</Banner>}
         {loadError && <Banner tone="error">{loadError}</Banner>}
         {loading && <p style={{ fontFamily: BB, fontSize: 14, color: "#aaa" }}>Memuat data kontingen…</p>}
 
@@ -1720,8 +1959,8 @@ export function RegistrationPage({ user }: { user: User }) {
             pays={pays}
             confirmId={confirmId}
             setConfirmId={setConfirmId}
-            onAdd={() => setEditing("new")}
-            onEdit={setEditing}
+            onAdd={() => (isMupel(user.mupel) ? setEditing("new") : onEditProfile())}
+            onEdit={(item) => (isMupel(user.mupel) ? setEditing(item) : onEditProfile())}
             onDelete={(id) => {
               void deletePeserta(id)
                 .then(() => {
@@ -1763,11 +2002,11 @@ function RegistrationForm({
           tanggal: existing.tanggal,
           gender: existing.gender,
           gereja: existing.gereja,
-          mupel: existing.mupel,
+          mupel: user.mupel || existing.mupel,
           wa: existing.wa ?? "",
           ukuran: existing.ukuran ?? "",
         }
-      : emptyForm(""),
+      : { ...emptyForm(""), mupel: user.mupel },
   )
   const [foto, setFoto] = useState<string>(existing?.foto ?? "")
   const [lomba, setLomba] = useState<string[]>(existing?.lomba ?? [])
@@ -1808,7 +2047,7 @@ function RegistrationForm({
     if (!form.gender) e.gender = "Pilih jenis kelamin."
     if (!foto) e.foto = "Foto wajib diunggah."
     if (!form.gereja.trim()) e.gereja = "Asal gereja wajib diisi."
-    if (!form.mupel.trim()) e.mupel = "Asal mupel wajib diisi."
+    if (!isMupel(user.mupel)) e.mupel = "Isi asal mupel pada profil akun kontingen."
     if (!/^(\+?62|0)8\d{7,12}$/.test(form.wa.replace(/[\s-]/g, "")))
       e.wa = "Masukkan nomor WhatsApp yang valid, contoh 081234567890."
     if (!form.ukuran) e.ukuran = "Pilih ukuran kaos."
@@ -1838,7 +2077,7 @@ function RegistrationForm({
       tanggal: form.tanggal,
       gender: form.gender,
       gereja: form.gereja.trim(),
-      mupel: form.mupel.trim(),
+      mupel: user.mupel,
       foto,
       fotoPath: existing?.fotoPath,
       wa: form.wa.replace(/[\s-]/g, ""),
@@ -1924,8 +2163,8 @@ function RegistrationForm({
           <input id="r-gereja" className="tks-input" style={{ ...inputStyle, ...err("gereja") }} value={form.gereja} onChange={text("gereja")} placeholder="Nama jemaat GPIB" />
         </Field>
 
-        <Field label="7. Asal Mupel" htmlFor="r-mupel" error={errors.mupel}>
-          <input id="r-mupel" className="tks-input" style={{ ...inputStyle, ...err("mupel") }} value={form.mupel} onChange={text("mupel")} placeholder="Majelis Pekerja Umum Lingkup Pelayanan" />
+        <Field label="7. Asal Mupel" htmlFor="r-mupel" error={errors.mupel} hint="Otomatis mengikuti asal mupel akun kontingen.">
+          <MupelSelect id="r-mupel" value={user.mupel || form.mupel} disabled invalid={!!errors.mupel} />
         </Field>
 
         <Field label="8. Kontak WhatsApp (Contact Person)" htmlFor="r-wa" error={errors.wa} hint="Nomor WhatsApp aktif yang dapat dihubungi panitia.">
@@ -2072,7 +2311,7 @@ function ParticipantList({
                 <div style={{ fontFamily: BB, fontSize: 14, color: "#ccc", lineHeight: 1.7 }}>
                   <strong style={{ color: "#fff" }}>{r.jenis}</strong> · {r.gender} · {r.tempat}, {fmtDate(r.tanggal)}
                   <br />
-                  {r.gereja} · Mupel {r.mupel}
+                  {r.gereja} · Mupel {mupelText(r.mupel)}
                   <br />
                   {r.wa ? (
                     <a href={`https://wa.me/${r.wa.replace(/^\+/, "").replace(/^0/, "62")}`} target="_blank" rel="noreferrer" style={{ color: O }}>WA {r.wa}</a>

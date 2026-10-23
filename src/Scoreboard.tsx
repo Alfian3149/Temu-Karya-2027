@@ -39,14 +39,14 @@ type Row = Contingent & { poin: number; menang: number; main: number; perLomba: 
 const listMatches = () => read<Match[]>(MATCH_KEY, [])
 const isFinal = () => read<boolean>(SCORE_FINAL_KEY, false)
 
-export function contingentsFrom(regs: Registration[], users: { email: string; name: string; role?: string }[]): Contingent[] {
+export function contingentsFrom(regs: Registration[], users: { email: string; name: string; role?: string; mupel?: string }[]): Contingent[] {
   return users
     .filter((u) => (u.role ?? "user") === "user" && regs.some((r) => r.email === u.email))
     .map((u) => {
       const count: Record<string, number> = {}
       regs.filter((r) => r.email === u.email && r.mupel).forEach((r) => (count[r.mupel] = (count[r.mupel] ?? 0) + 1))
-      const mupel = Object.entries(count).sort((a, b) => b[1] - a[1])[0]?.[0]
-      return { id: u.email, name: mupel || u.name, leader: u.name }
+      const majority = Object.entries(count).sort((a, b) => b[1] - a[1])[0]?.[0]
+      return { id: u.email, name: u.mupel || majority || u.name, leader: u.name }
     })
     .sort((a, b) => a.name.localeCompare(b.name))
 }

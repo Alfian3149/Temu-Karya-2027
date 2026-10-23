@@ -6,7 +6,7 @@ import logo from "@/imports/LOGO_TKSGPIB27__3_.png"
 import heroImage from "@/imports/hero-logo.png"
 import image1 from "@/imports/image-1.png" 
 import image2 from "@/imports/image-2.png"
-import { useAuth, LoginPage, RegistrationPage, isStaff, ROLE_LABEL, type User } from "@/Account"
+import { useAuth, LoginPage, RegistrationPage, ProfilePage, isStaff, isMupel, mupelText, ROLE_LABEL, type User } from "@/Account"
 import { AdminPanel } from "@/Admin"
 
 // ── Style tokens ───────────────────────────────────────────────────────────────
@@ -307,6 +307,7 @@ function Navbar({
   onLogin,
   onLogout,
   onRegister,
+  onProfile,
   onGoHome,
   isHome,
 }: {
@@ -317,6 +318,7 @@ function Navbar({
   onLogin: () => void
   onLogout: () => void
   onRegister: () => void
+  onProfile: () => void
   onGoHome: () => void
   isHome: boolean
 }) {
@@ -564,14 +566,19 @@ function Navbar({
                       <div style={{ fontFamily: BB, fontSize: 12, color: "#888", overflow: "hidden", textOverflow: "ellipsis" }}>
                         {user.email}
                       </div>
-                      {isStaff(user) && (
+                      {isStaff(user) ? (
                         <div style={{ fontFamily: BC, fontWeight: 700, fontSize: 11, letterSpacing: 2, color: "#FF6D00", marginTop: 4 }}>
                           {ROLE_LABEL[user.role].toUpperCase()}
                         </div>
-                      )}
+                      ) : isMupel(user.mupel) ? (
+                        <div style={{ fontFamily: BC, fontWeight: 700, fontSize: 11, letterSpacing: 1, color: "#FF6D00", marginTop: 4 }}>
+                          {mupelText(user.mupel).toUpperCase()}
+                        </div>
+                      ) : null}
                     </div>
                     {[
                       { label: isStaff(user) ? "PANEL ADMIN" : "REGISTRASI SAYA", fn: () => { setUserMenu(false); onRegister() } },
+                      ...(!isStaff(user) ? [{ label: "EDIT PROFIL", fn: () => { setUserMenu(false); onProfile() } }] : []),
                       { label: "KELUAR", fn: () => { setUserMenu(false); onLogout() } },
                     ].map((m) => (
                       <button
@@ -741,12 +748,22 @@ function Navbar({
                 <span style={{ fontFamily: BB, fontSize: 14, color: "#ccc", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {user.name}
                 </span>
-                <button
-                  onClick={() => { setMenuOpen(false); onLogout() }}
-                  style={{ fontFamily: BC, fontWeight: 800, fontSize: 13, letterSpacing: 2, color: O, background: "none", border: `1px solid ${O}`, padding: "8px 16px", cursor: "pointer" }}
-                >
-                  KELUAR
-                </button>
+                <span style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                  {!isStaff(user) && (
+                    <button
+                      onClick={() => { setMenuOpen(false); onProfile() }}
+                      style={{ fontFamily: BC, fontWeight: 800, fontSize: 13, letterSpacing: 2, color: "#fff", background: O, border: "none", padding: "8px 16px", cursor: "pointer" }}
+                    >
+                      PROFIL
+                    </button>
+                  )}
+                  <button
+                    onClick={() => { setMenuOpen(false); onLogout() }}
+                    style={{ fontFamily: BC, fontWeight: 800, fontSize: 13, letterSpacing: 2, color: O, background: "none", border: `1px solid ${O}`, padding: "8px 16px", cursor: "pointer" }}
+                  >
+                    KELUAR
+                  </button>
+                </span>
               </div>
             ) : (
               <button
@@ -2845,7 +2862,8 @@ function MainApp() {
   const [infoTab, setInfoTab] = useState("accommodation")
   const auth = useAuth()
   const { user } = auth
-  const [view, setView] = useState<"home" | "login" | "registration" | "admin">("home")
+  const [view, setView] = useState<"home" | "login" | "registration" | "admin" | "profile">("home")
+  const [profileNotice, setProfileNotice] = useState("")
   const [afterLogin, setAfterLogin] = useState<"home" | "registration">("home")
   const [notice, setNotice] = useState("")
 
@@ -2854,8 +2872,8 @@ function MainApp() {
   }, [view])
 
   useEffect(() => {
-    if (!user && (view === "registration" || view === "admin")) setView("login")
-    else if (user && isStaff(user) && view === "registration") setView("admin")
+    if (!user && (view === "registration" || view === "admin" || view === "profile")) setView("login")
+    else if (user && isStaff(user) && (view === "registration" || view === "profile")) setView("admin")
     else if (user && !isStaff(user) && view === "admin") setView("registration")
   }, [user, view])
 
@@ -2868,6 +2886,10 @@ function MainApp() {
     setAfterLogin("home")
     setNotice("")
     setView("login")
+  }
+  const openProfile = (message = "") => {
+    setProfileNotice(message)
+    setView("profile")
   }
   const openRegistration = () => {
     if (user) {
@@ -2939,7 +2961,7 @@ function MainApp() {
         }
       `}</style>
       <Navbar
-        active={view === "registration" || view === "admin" ? "REGISTRATION" : view === "login" ? "" : activeNav}
+        active={view === "registration" || view === "admin" ? "REGISTRATION" : view === "home" ? activeNav : ""}
         onNav={setActiveNav}
         onSubNav={handleSubNav}
         user={user}
@@ -2949,6 +2971,7 @@ function MainApp() {
           setView("home")
         }}
         onRegister={openRegistration}
+        onProfile={() => openProfile(user && isMupel(user.mupel) ? "" : "Isi asal mupel. Setiap peserta kontingen memakai mupel ini.")}
         onGoHome={() => setView("home")}
         isHome={view === "home"}
       />
@@ -2959,7 +2982,20 @@ function MainApp() {
           onSuccess={() => {}}
         />
       )}
-      {view === "registration" && user && !isStaff(user) && <RegistrationPage user={user} />}
+      {view === "registration" && user && !isStaff(user) && (
+        <RegistrationPage
+          user={user}
+          onEditProfile={() => openProfile(isMupel(user.mupel) ? "" : "Isi asal mupel sebelum menambah peserta. Setiap peserta kontingen memakai mupel ini.")}
+        />
+      )}
+      {view === "profile" && user && !isStaff(user) && (
+        <ProfilePage
+          user={user}
+          notice={profileNotice}
+          onSave={auth.updateProfile}
+          onBack={() => setView("registration")}
+        />
+      )}
       {view === "admin" && user && isStaff(user) && <AdminPanel user={user} />}
       {view === "home" && (
         <>

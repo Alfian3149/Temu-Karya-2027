@@ -209,11 +209,29 @@ create table public.profil (
   nama text not null check (char_length(btrim(nama)) >= 3),
   email text not null unique check (email ~* '^[^@\s]+@[^@\s]+\.[^@\s]+$'),
   peran public.peran not null default 'user',
+  mupel text,
+  whatsapp text,
+  gereja text,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint profil_mupel_cek check (
+    mupel is null or mupel in (
+      'BABEL', 'BALI-NTB', 'BANTEN', 'BEKASI', 'JABAR I', 'JABAR II',
+      'JAKBAR', 'JAKPUS', 'JAKSEL', 'JAKTIM', 'JAKUT', 'JAMBI',
+      'JATENG-DIY', 'JATIM', 'KALBAR', 'KALSELTENG', 'KALTARA-BERKAT',
+      'KALTIM I', 'KALTIM II', 'KEPRI', 'LAMPUNG', 'SULSELBARA',
+      'SUMBAR-RIAU', 'SUMSEL', 'SUMUT-ACEH'
+    )
+  ),
+  constraint profil_whatsapp_cek check (
+    whatsapp is null or whatsapp ~ '^(\+?62|0)8[0-9]{7,12}$'
+  )
 );
 
 comment on table public.profil is 'Menu Akun. Satu baris per pengguna Auth. peran=user adalah Ketua Kontingen.';
+comment on column public.profil.mupel is 'Asal mupel ketua kontingen. Peserta kontingen dipaksa memakai nilai ini.';
+comment on column public.profil.whatsapp is 'Nomor WhatsApp ketua kontingen. Opsional.';
+comment on column public.profil.gereja is 'Asal gereja ketua kontingen. Opsional.';
 
 create or replace function public.punya_peran(variadic diminta text[])
 returns boolean
@@ -251,13 +269,26 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  asal text := nullif(btrim(new.raw_user_meta_data ->> 'mupel'), '');
 begin
-  insert into public.profil (id, nama, email, peran)
+  if asal is not null and asal not in (
+    'BABEL', 'BALI-NTB', 'BANTEN', 'BEKASI', 'JABAR I', 'JABAR II',
+    'JAKBAR', 'JAKPUS', 'JAKSEL', 'JAKTIM', 'JAKUT', 'JAMBI',
+    'JATENG-DIY', 'JATIM', 'KALBAR', 'KALSELTENG', 'KALTARA-BERKAT',
+    'KALTIM I', 'KALTIM II', 'KEPRI', 'LAMPUNG', 'SULSELBARA',
+    'SUMBAR-RIAU', 'SUMSEL', 'SUMUT-ACEH'
+  ) then
+    asal := null;
+  end if;
+
+  insert into public.profil (id, nama, email, peran, mupel)
   values (
     new.id,
     coalesce(nullif(btrim(new.raw_user_meta_data ->> 'nama'), ''), split_part(new.email, '@', 1)),
     lower(new.email),
-    'user'
+    'user',
+    asal
   );
   return new;
 end;
@@ -291,6 +322,29 @@ $$;
 create trigger profil_kunci_peran
   before update on public.profil
   for each row execute function public.kunci_peran_profil();
+
+create or replace function public.sesuaikan_mupel_peserta()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.peran = 'user'
+     and new.mupel is not null
+     and new.mupel is distinct from old.mupel then
+    update public.peserta
+      set mupel = new.mupel
+      where kontingen_id = new.id
+        and mupel is distinct from new.mupel;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger profil_sesuaikan_mupel
+  after update of mupel on public.profil
+  for each row execute function public.sesuaikan_mupel_peserta();
 
 -- -----------------------------------------------------------------------------
 -- Peserta
@@ -345,6 +399,37 @@ create trigger peserta_nomor
 create trigger peserta_updated_at
   before update on public.peserta
   for each row execute function public.set_updated_at();
+
+create or replace function public.samakan_mupel_peserta()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  mupel_ketua text;
+  peran_ketua public.peran;
+begin
+  select p.mupel, p.peran into mupel_ketua, peran_ketua
+  from public.profil p
+  where p.id = new.kontingen_id;
+
+  if peran_ketua = 'user' then
+    if mupel_ketua is null or btrim(mupel_ketua) = '' then
+      if tg_op = 'INSERT' then
+        raise exception 'Ketua kontingen wajib mengisi asal mupel sebelum mendaftarkan peserta';
+      end if;
+      return new;
+    end if;
+    new.mupel := mupel_ketua;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger peserta_samakan_mupel
+  before insert or update on public.peserta
+  for each row execute function public.samakan_mupel_peserta();
 
 create table public.peserta_lomba (
   peserta_id uuid not null references public.peserta (id) on delete cascade,
@@ -1131,6 +1216,18 @@ begin
   end if;
 
   if old.status is distinct from 'Menunggu Verifikasi' then
+    if tg_table_name = 'peserta'
+       and (to_jsonb(new) - 'mupel' - 'updated_at') = (to_jsonb(old) - 'mupel' - 'updated_at')
+       and exists (
+         select 1
+         from public.profil p
+         where p.id = new.kontingen_id
+           and p.peran = 'user'
+           and p.mupel is not null
+           and p.mupel = new.mupel
+       ) then
+      return new;
+    end if;
     if public.punya_peran('superuser') and new.status = 'Menunggu Verifikasi' then
       new := old;
       new.status := 'Menunggu Verifikasi';
@@ -1299,6 +1396,7 @@ select
   p.nama as ketua,
   p.email,
   coalesce(
+    nullif(btrim(p.mupel), ''),
     (
       select s.mupel
       from public.peserta s
@@ -1312,7 +1410,7 @@ select
 from public.profil p
 where p.peran = 'user';
 
-comment on view public.v_kontingen is 'Kontingen = ketua (profil peran user) dengan nama mupel yang paling sering dipakai pesertanya.';
+comment on view public.v_kontingen is 'Kontingen = ketua (profil peran user). Nama memakai asal mupel pada profil.';
 
 create view public.v_pengajuan_anggaran
 with (security_invoker = true) as
@@ -1389,6 +1487,7 @@ kontingen as (
   select
     p.id,
     coalesce(
+      nullif(btrim(p.mupel), ''),
       (
         select s.mupel
         from public.peserta s

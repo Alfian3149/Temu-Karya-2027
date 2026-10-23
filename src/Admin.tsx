@@ -30,6 +30,7 @@ import {
   LOCK_MSG,
   verdictText,
   ROLE_LABEL,
+  mupelText,
   SEED_ADMIN,
   ST,
   StatusChip,
@@ -255,7 +256,7 @@ function ParticipantsAdmin({ data, refresh, me }: TabProps) {
     regNo: r.regNo,
     nama: r.nama,
     role: r.jenis,
-    line1: `${r.gereja} · Mupel ${r.mupel}`,
+    line1: `${r.gereja} · Mupel ${mupelText(r.mupel)}`,
     line2: `Kontingen ${ownerName(data, r.email)}`,
     foto: r.foto,
     color: ROLE_COLOR[r.jenis] ?? O,
@@ -268,7 +269,7 @@ function ParticipantsAdmin({ data, refresh, me }: TabProps) {
 
   const list = data.regs
     .filter((r) => (!status || r.status === status) && (!jenis || r.jenis === jenis))
-    .filter((r) => matches(q, r.nama, r.regNo, r.gereja, r.mupel, ownerName(data, r.email)))
+    .filter((r) => matches(q, r.nama, r.regNo, r.gereja, r.mupel, mupelText(r.mupel), ownerName(data, r.email)))
 
   const payState = (id: string) => {
     const ps = data.pays.filter((p) => p.regIds.includes(id))
@@ -286,7 +287,7 @@ function ParticipantsAdmin({ data, refresh, me }: TabProps) {
           <option value="">Semua jenis</option>
           {JENIS.map((j) => <option key={j}>{j}</option>)}
         </select>
-        <button className="tks-btn" onClick={() => downloadCsv("peserta-tks2027.csv", [["No Reg", "Nama", "Jenis", "Gender", "Tempat Lahir", "Tanggal Lahir", "Gereja", "Mupel", "WhatsApp", "Kaos", "Lomba", "Status", "Kontingen"], ...list.map((r) => [r.regNo, r.nama, r.jenis, r.gender, r.tempat, r.tanggal, r.gereja, r.mupel, r.wa, r.ukuran, (r.lomba ?? []).join("; "), r.status, ownerName(data, r.email)])])} style={{ ...smallBtn, color: O, background: "none", border: `1px solid ${O}` }}>
+        <button className="tks-btn" onClick={() => downloadCsv("peserta-tks2027.csv", [["No Reg", "Nama", "Jenis", "Gender", "Tempat Lahir", "Tanggal Lahir", "Gereja", "Mupel", "WhatsApp", "Kaos", "Lomba", "Status", "Kontingen"], ...list.map((r) => [r.regNo, r.nama, r.jenis, r.gender, r.tempat, r.tanggal, r.gereja, mupelText(r.mupel), r.wa, r.ukuran, (r.lomba ?? []).join("; "), r.status, ownerName(data, r.email)])])} style={{ ...smallBtn, color: O, background: "none", border: `1px solid ${O}` }}>
           EXPORT CSV
         </button>
         <button className="tks-btn" disabled={!list.length} onClick={() => setPrint(list.map(toCard))} style={{ ...smallBtn, color: "#fff", background: O, border: "none" }}>
@@ -309,7 +310,7 @@ function ParticipantsAdmin({ data, refresh, me }: TabProps) {
                   </div>
                   <div style={{ fontFamily: BC, fontWeight: 800, fontSize: 22, color: "#fff", margin: "2px 0 4px", overflowWrap: "anywhere" }}>{r.nama}</div>
                   <div style={{ fontFamily: BB, fontSize: 13, color: "#ccc", lineHeight: 1.7, marginBottom: 10 }}>
-                    <strong style={{ color: "#fff" }}>{r.jenis}</strong> · {r.gender} · {r.tempat}, {fmtDate(r.tanggal)} · {r.gereja} · Mupel {r.mupel}
+                    <strong style={{ color: "#fff" }}>{r.jenis}</strong> · {r.gender} · {r.tempat}, {fmtDate(r.tanggal)} · {r.gereja} · Mupel {mupelText(r.mupel)}
                     <br />
                     WA {r.wa || "-"} · Kaos {r.ukuran || "-"} · Lomba: {(r.lomba ?? []).join(", ") || "-"}
                   </div>
@@ -448,7 +449,7 @@ function RaceAdmin({ data, refresh, me }: TabProps) {
           {candidates.map((r) => <option key={r.id} value={r.id}>{r.nama} — {ownerName(data, r.email)}</option>)}
         </select>
         <button className="tks-btn" disabled={!add} onClick={addEntry} style={{ ...smallBtn, color: "#fff", background: O, border: "none" }}>TAMBAH</button>
-        <button className="tks-btn" onClick={() => downloadCsv(`lomba-${race}.csv`, [["No Reg", "Nama", "Jenis", "Gender", "Kontingen", "Gereja", "Mupel", "WhatsApp", "Status Lomba"], ...entries.map((r) => [r.regNo, r.nama, r.jenis, r.gender, ownerName(data, r.email), r.gereja, r.mupel, r.wa, statusOf(r, race)])])} style={{ ...smallBtn, color: O, background: "none", border: `1px solid ${O}` }}>EXPORT CSV</button>
+        <button className="tks-btn" onClick={() => downloadCsv(`lomba-${race}.csv`, [["No Reg", "Nama", "Jenis", "Gender", "Kontingen", "Gereja", "Mupel", "WhatsApp", "Status Lomba"], ...entries.map((r) => [r.regNo, r.nama, r.jenis, r.gender, ownerName(data, r.email), r.gereja, mupelText(r.mupel), r.wa, statusOf(r, race)])])} style={{ ...smallBtn, color: O, background: "none", border: `1px solid ${O}` }}>EXPORT CSV</button>
       </div>
 
       {entries.length === 0 ? <Empty>Belum ada peserta terdaftar pada {race}.</Empty> : (
@@ -752,7 +753,7 @@ function UsersAdmin({ data, refresh, me }: TabProps) {
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontFamily: BC, fontWeight: 800, fontSize: 18, color: "#fff" }}>{u.name} {u.id === me.id && <Chip tone="gray">ANDA</Chip>}</div>
-                <div style={{ fontFamily: BB, fontSize: 13, color: "#999" }}>{u.email}{(u.role ?? "user") === "user" && <> · {data.regs.filter((r) => r.email === u.email).length} peserta</>}</div>
+                <div style={{ fontFamily: BB, fontSize: 13, color: "#999" }}>{u.email}{(u.role ?? "user") === "user" && <> · {u.mupel ? mupelText(u.mupel) : "Mupel belum diisi"} · {data.regs.filter((r) => r.email === u.email).length} peserta</>}</div>
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <select className="tks-input" aria-label={`Peran ${u.name}`} disabled={u.id === me.id} style={{ ...inputStyle, width: "auto", padding: "8px 12px" }} value={u.role ?? "user"} onChange={(e) => guard(() => setUserRole(u.id, e.target.value as Role))}>

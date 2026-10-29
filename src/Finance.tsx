@@ -1,13 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from "react"
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import {
-  read,
-  write,
-  randomId,
+  newUuid,
   readProof,
-  listUsers,
-  PAY_KEY,
-  ST,
   Field,
   PrimaryButton,
   Banner,
@@ -20,14 +15,16 @@ import {
   fmtSize,
   rupiah,
   type FileInfo,
-  type Payment,
 } from "@/Account"
+import { supabase } from "@/lib/supabase"
 
 const BC = "'Barlow Condensed', sans-serif"
 const BB = "'Barlow', sans-serif"
 const O = "#FF6D00"
 const GREEN = "#66bb6a"
 const RED = "#ef5350"
+
+type Proof = FileInfo & { proofId?: string; path?: string }
 
 export type Txn = {
   id: string
@@ -38,58 +35,198 @@ export type Txn = {
   uraian: string
   jumlah: number
   metode: string
-  bukti: FileInfo[]
+  bukti: Proof[]
   createdAt: string
   createdBy: string
+  auto?: boolean
 }
-export const FIN_KEY = "tks27_finance"
 
 export const KAT_MASUK = ["Sponsor", "Donasi", "Kas Sinodal / Mupel", "Penjualan (kaos, merchandise)", "Bunga Bank", "Lainnya"]
 export const KAT_KELUAR = ["Akomodasi", "Transportasi", "Konsumsi", "Lomba & Hadiah", "Perlengkapan & Dekorasi", "Kesehatan", "Dokumentasi & Publikasi", "Honor & Konsumsi Panitia", "Sewa Tempat", "Lainnya"]
 const METODE = ["Transfer Bank", "Tunai", "E-Wallet"]
-const AUTO_KAT = "Pendaftaran Peserta"
+const BUCKET = "bukti-keuangan"
+const PAY_BUCKET = "bukti-pembayaran"
 const MAX_BUKTI = 10
 
-type Row = { id: string; kind: "masuk" | "keluar"; date: string; kategori: string; pihak: string; uraian: string; jumlah: number; metode: string; auto?: boolean; bukti: FileInfo[] }
+export type FinanceTotals = { masuk: number; keluar: number; saldo: number; tanpaBukti: number }
+
+type DbBukti = { id: string; berkas_path: string; berkas_nama: string; berkas_mime: string; berkas_ukuran: number }
+type DbBayar = { berkas_path: string | null; berkas_nama: string | null; berkas_mime: string | null; berkas_ukuran: number | null }
+type DbTxn = {
+  id: string
+  jenis: "masuk" | "keluar"
+  sumber: "manual" | "pendaftaran"
+  tanggal: string
+  kategori: string
+  pihak: string
+  uraian: string
+  jumlah: number | string
+  metode: string
+  created_at: string
+  pembuat: { nama: string } | { nama: string }[] | null
+  transaksi_bukti: DbBukti[] | null
+  pembayaran: DbBayar | DbBayar[] | null
+}
 
 const today = () => new Date().toISOString().slice(0, 10)
-const listTxns = () => read<Txn[]>(FIN_KEY, [])
+const emptyTotals = (): FinanceTotals => ({ masuk: 0, keluar: 0, saldo: 0, tanpaBukti: 0 })
+let cachedTotals = emptyTotals()
 
-function safeWrite(txns: Txn[]): string {
-  try {
-    write(FIN_KEY, txns)
-    return ""
-  } catch {
-    return "Penyimpanan peramban penuh. Kurangi jumlah atau ukuran bukti."
+function throwIf(error: { message: string } | null) {
+  if (error) throw new Error(error.message)
+}
+
+function one<T>(value: T | T[] | null | undefined): T | null {
+  if (!value) return null
+  return Array.isArray(value) ? value[0] ?? null : value
+}
+
+function extOf(type: string) {
+  return type === "application/pdf" ? "pdf" : "jpg"
+}
+
+async function signedUrls(bucket: string, paths: string[]) {
+  const unique = [...new Set(paths.filter(Boolean))]
+  const map = new Map<string, string>()
+  if (!unique.length) return map
+  const { data, error } = await supabase.storage.from(bucket).createSignedUrls(unique, 60 * 60)
+  throwIf(error)
+  for (const item of data ?? []) {
+    if (item.path && item.signedUrl) map.set(item.path, item.signedUrl)
+  }
+  return map
+}
+
+async function uploadProof(path: string, dataUrl: string, contentType: string) {
+  const blob = await (await fetch(dataUrl)).blob()
+  const { error } = await supabase.storage.from(BUCKET).upload(path, blob, { upsert: true, contentType })
+  throwIf(error)
+}
+
+function proofOf(file: DbBukti | DbBayar, url: string, proofId?: string): Proof {
+  return {
+    proofId,
+    path: file.berkas_path ?? undefined,
+    name: file.berkas_nama || "bukti",
+    type: file.berkas_mime || "application/octet-stream",
+    size: file.berkas_ukuran || 0,
+    data: url,
   }
 }
 
-function autoRows(): Row[] {
-  const users = listUsers()
-  return read<Payment[]>(PAY_KEY, [])
-    .filter((p) => p.status === ST.ok)
-    .map((p) => ({
-      id: `auto-${p.id}`,
-      kind: "masuk" as const,
-      date: String(p.date).slice(0, 10),
-      kategori: AUTO_KAT,
-      pihak: `Kontingen ${users.find((u) => u.email === p.owner)?.name ?? p.owner}`,
-      uraian: `Pembayaran pendaftaran ${p.regIds.length} peserta`,
-      jumlah: p.amount,
-      metode: "Transfer Bank",
-      auto: true,
-      bukti: [p.file],
-    }))
+function mapTxn(row: DbTxn, kasUrl: Map<string, string>, bayarUrl: Map<string, string>): Txn {
+  const bayar = one(row.pembayaran)
+  const bukti = (row.transaksi_bukti ?? [])
+    .filter((file) => kasUrl.has(file.berkas_path))
+    .map((file) => proofOf(file, kasUrl.get(file.berkas_path) || "", file.id))
+  if (bayar?.berkas_path && bayarUrl.has(bayar.berkas_path)) bukti.push(proofOf(bayar, bayarUrl.get(bayar.berkas_path) || ""))
+  return {
+    id: row.id,
+    kind: row.jenis,
+    date: String(row.tanggal).slice(0, 10),
+    kategori: row.kategori,
+    pihak: row.pihak,
+    uraian: row.uraian,
+    jumlah: Number(row.jumlah),
+    metode: row.metode,
+    bukti,
+    createdAt: row.created_at,
+    createdBy: one(row.pembuat)?.nama || "",
+    auto: row.sumber === "pendaftaran",
+  }
 }
 
-const allRows = (): Row[] => [...autoRows(), ...listTxns().map((t) => ({ ...t, bukti: t.bukti ?? [] }))]
+export async function fetchFinanceRows(): Promise<Txn[]> {
+  const { data, error } = await supabase
+    .from("transaksi")
+    .select(`
+      id, jenis, sumber, tanggal, kategori, pihak, uraian, jumlah, metode, created_at,
+      pembuat:created_by ( nama ),
+      transaksi_bukti ( id, berkas_path, berkas_nama, berkas_mime, berkas_ukuran ),
+      pembayaran:pembayaran_id ( berkas_path, berkas_nama, berkas_mime, berkas_ukuran )
+    `)
+    .order("tanggal", { ascending: false })
+  throwIf(error)
+  const rows = (data ?? []) as unknown as DbTxn[]
+  const kasPaths = rows.flatMap((row) => (row.transaksi_bukti ?? []).map((file) => file.berkas_path))
+  const bayarPaths = rows.map((row) => one(row.pembayaran)?.berkas_path || "")
+  const [kasUrl, bayarUrl] = await Promise.all([signedUrls(BUCKET, kasPaths), signedUrls(PAY_BUCKET, bayarPaths)])
+  return rows.map((row) => mapTxn(row, kasUrl, bayarUrl))
+}
 
-export function financeTotals() {
-  const rows = allRows()
+function totalsOf(rows: Txn[]): FinanceTotals {
   const masuk = rows.filter((r) => r.kind === "masuk").reduce((n, r) => n + r.jumlah, 0)
   const keluar = rows.filter((r) => r.kind === "keluar").reduce((n, r) => n + r.jumlah, 0)
   const tanpaBukti = rows.filter((r) => r.kind === "keluar" && !r.bukti.length).length
   return { masuk, keluar, saldo: masuk - keluar, tanpaBukti }
+}
+
+export function financeTotals() {
+  return cachedTotals
+}
+
+export async function refreshFinanceTotals() {
+  cachedTotals = totalsOf(await fetchFinanceRows())
+  return cachedTotals
+}
+
+async function saveTxn(kind: "masuk" | "keluar", item: Txn, previous: Proof[], isEdit: boolean) {
+  const user = (await supabase.auth.getUser()).data.user
+  if (!user) throw new Error("Sesi berakhir. Silakan masuk lagi.")
+  const payload = {
+    jenis: kind,
+    sumber: "manual" as const,
+    tanggal: item.date,
+    kategori: item.kategori,
+    pihak: item.pihak,
+    uraian: item.uraian,
+    jumlah: item.jumlah,
+    metode: item.metode,
+  }
+  if (item.auto) throw new Error("Pemasukan pendaftaran mengikuti status pembayaran dan tidak dapat diubah di sini.")
+  if (isEdit) {
+    const { data, error } = await supabase.from("transaksi").update(payload).eq("id", item.id).eq("sumber", "manual").select("id")
+    throwIf(error)
+    if (!data?.length) throw new Error("Transaksi tidak dapat diubah. Hanya bendahara atau superuser yang dapat mencatat kas.")
+  } else {
+    const { error } = await supabase.from("transaksi").insert({ ...payload, id: item.id, created_by: user.id })
+    throwIf(error)
+  }
+  const kept = new Set(item.bukti.map((file) => file.proofId).filter(Boolean))
+  const removed = previous.filter((file) => file.proofId && file.path && !kept.has(file.proofId))
+  if (removed.length) {
+    const { error } = await supabase.storage.from(BUCKET).remove(removed.map((file) => file.path as string))
+    throwIf(error)
+    const { error: rowError } = await supabase.from("transaksi_bukti").delete().in("id", removed.map((file) => file.proofId as string))
+    throwIf(rowError)
+  }
+  for (const file of item.bukti) {
+    if (!file.data.startsWith("data:")) continue
+    const id = newUuid()
+    const path = `${user.id}/${item.id}/${id}.${extOf(file.type)}`
+    await uploadProof(path, file.data, file.type)
+    const { error } = await supabase.from("transaksi_bukti").insert({
+      id,
+      transaksi_id: item.id,
+      berkas_path: path,
+      berkas_nama: file.name,
+      berkas_mime: file.type,
+      berkas_ukuran: Math.max(1, file.size || 1),
+    })
+    throwIf(error)
+  }
+}
+
+async function deleteTxn(item: Txn) {
+  if (item.auto) throw new Error("Pemasukan pendaftaran dihapus otomatis jika pembayaran dibatalkan.")
+  const paths = item.bukti.map((file) => file.path).filter((path): path is string => !!path)
+  const { data, error } = await supabase.from("transaksi").delete().eq("id", item.id).eq("sumber", "manual").select("id")
+  throwIf(error)
+  if (!data?.length) throw new Error("Transaksi tidak dapat dihapus.")
+  if (paths.length) {
+    const { error: storageError } = await supabase.storage.from(BUCKET).remove(paths)
+    throwIf(storageError)
+  }
 }
 
 function downloadCsv(name: string, rows: (string | number)[][]) {
@@ -174,13 +311,16 @@ const Empty = ({ children }: { children: React.ReactNode }) => (
 )
 
 // ── Income / Expense (same machinery) ──────────────────────────────────────────
-type FormState = { date: string; kategori: string; pihak: string; uraian: string; jumlah: string; metode: string; bukti: FileInfo[] }
+type FormState = { date: string; kategori: string; pihak: string; uraian: string; jumlah: string; metode: string; bukti: Proof[] }
 const emptyForm = (): FormState => ({ date: today(), kategori: "", pihak: "", uraian: "", jumlah: "", metode: METODE[0], bukti: [] })
 
-function TxnTab({ kind, me }: { kind: "masuk" | "keluar"; me: string }) {
+function TxnTab({ kind }: { kind: "masuk" | "keluar"; me: string }) {
   const isIn = kind === "masuk"
   const kats = isIn ? KAT_MASUK : KAT_KELUAR
-  const [txns, setTxns] = useState<Txn[]>(listTxns)
+  const [txns, setTxns] = useState<Txn[]>([])
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState("")
+  const [busy, setBusy] = useState(false)
   const [f, setF] = useState<FormState>(emptyForm())
   const [editing, setEditing] = useState<Txn | null>(null)
   const [errs, setErrs] = useState<Record<string, string>>({})
@@ -194,10 +334,22 @@ function TxnTab({ kind, me }: { kind: "masuk" | "keluar"; me: string }) {
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setF((s) => ({ ...s, [k]: v }))
   const dateStyle = { ...inputStyle, colorScheme: "dark" } as React.CSSProperties
 
-  const reload = () => setTxns(listTxns())
+  const reload = useCallback(async () => {
+    try {
+      const rows = await fetchFinanceRows()
+      cachedTotals = totalsOf(rows)
+      setTxns(rows)
+      setLoadError("")
+    } catch (e) {
+      setLoadError((e as Error).message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+  useEffect(() => { void reload() }, [reload])
   const reset = () => { setEditing(null); setF(emptyForm()); setErrs({}); setOpen(false) }
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     const er: Record<string, string> = {}
     const jumlah = Number(f.jumlah)
@@ -209,7 +361,7 @@ function TxnTab({ kind, me }: { kind: "masuk" | "keluar"; me: string }) {
     setErrs(er)
     if (Object.keys(er).length) return
     const item: Txn = {
-      id: editing?.id ?? randomId(),
+      id: editing?.id ?? newUuid(),
       kind,
       date: f.date,
       kategori: f.kategori,
@@ -219,15 +371,33 @@ function TxnTab({ kind, me }: { kind: "masuk" | "keluar"; me: string }) {
       metode: f.metode,
       bukti: f.bukti,
       createdAt: editing?.createdAt ?? new Date().toISOString(),
-      createdBy: editing?.createdBy ?? me,
+      createdBy: editing?.createdBy ?? "",
     }
-    const all = listTxns()
-    const next = editing ? all.map((t) => (t.id === item.id ? item : t)) : [...all, item]
-    const problem = safeWrite(next)
-    if (problem) return setErrs({ bukti: problem })
-    setMsg(editing ? "Perubahan tersimpan." : isIn ? "Pemasukan dicatat." : "Pengeluaran dicatat.")
-    reset()
-    reload()
+    setBusy(true)
+    try {
+      await saveTxn(kind, item, editing?.bukti ?? [], !!editing)
+      setMsg(editing ? "Perubahan tersimpan." : isIn ? "Pemasukan dicatat." : "Pengeluaran dicatat.")
+      reset()
+      await reload()
+    } catch (err) {
+      setErrs({ bukti: (err as Error).message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const remove = async (item: Txn) => {
+    setBusy(true)
+    try {
+      await deleteTxn(item)
+      setConfirmId(null)
+      setMsg("Transaksi dihapus.")
+      await reload()
+    } catch (err) {
+      setLoadError((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
   }
 
   const startEdit = (t: Txn) => {
@@ -238,8 +408,9 @@ function TxnTab({ kind, me }: { kind: "masuk" | "keluar"; me: string }) {
     window.scrollTo({ top: 0, behavior: "smooth" })
   }
 
-  const auto = isIn ? autoRows() : []
+  const auto = isIn ? txns.filter((t) => t.auto) : []
   const list = txns
+    .filter((t) => !t.auto)
     .filter((t) => t.kind === kind)
     .filter((t) => (!kat || t.kategori === kat) && (!from || t.date >= from) && (!to || t.date <= to))
     .filter((t) => !q || [t.pihak, t.uraian, t.kategori].some((v) => v.toLowerCase().includes(q.toLowerCase())))
@@ -251,15 +422,35 @@ function TxnTab({ kind, me }: { kind: "masuk" | "keluar"; me: string }) {
   return (
     <div>
       <H>{isIn ? "PEMASUKAN" : "PENGELUARAN"}</H>
+      {loadError && <Banner tone="error">{loadError}</Banner>}
       {msg && <Banner tone="ok">{msg}</Banner>}
+      {loading && <div style={{ fontFamily: BB, fontSize: 14, color: "#aaa", marginBottom: 16 }}>Memuat data keuangan…</div>}
 
       {isIn && (
-        <div style={{ ...cardStyle, padding: 16, marginBottom: 20, display: "flex", gap: 16, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
-          <div>
-            <div style={{ fontFamily: BC, fontWeight: 700, fontSize: 11, letterSpacing: 3, color: O }}>OTOMATIS · PENDAFTARAN PESERTA</div>
-            <div style={{ fontFamily: BB, fontSize: 13, color: "#bbb", marginTop: 2 }}>{auto.length} bukti pembayaran terverifikasi oleh Admin Registrasi. Masuk laporan otomatis dan tidak perlu diinput ulang.</div>
+        <div style={{ ...cardStyle, padding: 16, marginBottom: 20 }}>
+          <div style={{ display: "flex", gap: 16, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontFamily: BC, fontWeight: 700, fontSize: 11, letterSpacing: 3, color: O }}>OTOMATIS · PENDAFTARAN PESERTA</div>
+              <div style={{ fontFamily: BB, fontSize: 13, color: "#bbb", marginTop: 2 }}>{auto.length} pembayaran terverifikasi. Masuk laporan otomatis dan tidak perlu diinput ulang.</div>
+            </div>
+            <div style={{ fontFamily: BC, fontWeight: 800, fontSize: 28, color: GREEN }}>{rupiah(autoTotal)}</div>
           </div>
-          <div style={{ fontFamily: BC, fontWeight: 800, fontSize: 28, color: GREEN }}>{rupiah(autoTotal)}</div>
+          {auto.length > 0 && (
+            <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
+              {auto.map((t) => (
+                <div key={t.id} style={{ borderTop: "1px solid #333", paddingTop: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                    <div>
+                      <div style={{ fontFamily: BC, fontWeight: 700, fontSize: 12, letterSpacing: 2, color: "#bbb" }}>{fmtDate(t.date)} · {t.pihak}</div>
+                      <div style={{ fontFamily: BB, fontSize: 14, color: "#fff" }}>{t.uraian}</div>
+                    </div>
+                    <div style={{ fontFamily: BC, fontWeight: 800, fontSize: 20, color: GREEN }}>+ {rupiah(t.jumlah)}</div>
+                  </div>
+                  <ProofLinks files={t.bukti} />
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -284,10 +475,10 @@ function TxnTab({ kind, me }: { kind: "masuk" | "keluar"; me: string }) {
             <Field label="Uraian" htmlFor="f-ur" error={errs.uraian}><input id="f-ur" className="tks-input" style={inputStyle} value={f.uraian} onChange={(e) => set("uraian", e.target.value)} placeholder="Keterangan transaksi" /></Field>
           </div>
           <Field label={isIn ? "Bukti Pemasukan (opsional)" : "Bukti Pengeluaran"} hint={isIn ? undefined : "Unggah semua nota atau kwitansi. Pengeluaran tanpa bukti ditandai pada daftar dan laporan."} error={undefined}>
-            <ProofPicker files={f.bukti} onChange={(b) => set("bukti", b)} error={errs.bukti} />
+            <ProofPicker files={f.bukti} onChange={(b) => set("bukti", b as Proof[])} error={errs.bukti} />
           </Field>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <PrimaryButton type="submit">{editing ? "SIMPAN PERUBAHAN" : "SIMPAN"}</PrimaryButton>
+            <PrimaryButton type="submit" disabled={busy}>{busy ? "MENYIMPAN…" : editing ? "SIMPAN PERUBAHAN" : "SIMPAN"}</PrimaryButton>
             <button type="button" className="tks-btn" onClick={reset} style={{ ...smallBtn, color: "#ddd", background: "none", border: "1px solid #666" }}>BATAL</button>
           </div>
         </form>
@@ -322,7 +513,7 @@ function TxnTab({ kind, me }: { kind: "masuk" | "keluar"; me: string }) {
               <ProofLinks files={t.bukti ?? []} />
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 12 }}>
                 <button className="tks-btn" onClick={() => startEdit(t)} style={{ ...smallBtn, padding: "8px 14px", fontSize: 12, color: "#ddd", background: "none", border: "1px solid #666" }}>UBAH{!isIn ? " / TAMBAH BUKTI" : ""}</button>
-                <DeleteControl id={t.id} confirmId={confirmId} setConfirmId={setConfirmId} label="Hapus transaksi ini?" onDelete={() => { safeWrite(listTxns().filter((x) => x.id !== t.id)); setConfirmId(null); reload() }} />
+                <DeleteControl id={t.id} confirmId={confirmId} setConfirmId={setConfirmId} label="Hapus transaksi ini?" onDelete={() => { void remove(t) }} />
               </div>
             </article>
           ))}
@@ -396,10 +587,27 @@ export function ReportTab({ me }: { me: string }) {
   const [from, setFrom] = useState("")
   const [to, setTo] = useState("")
   const [preview, setPreview] = useState(false)
+  const [source, setSource] = useState<Txn[]>([])
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState("")
   const dateStyle = { ...inputStyle, width: "auto", padding: "10px 14px", colorScheme: "dark" } as React.CSSProperties
 
-  const rows = useMemo(() => allRows().filter((r) => (!from || r.date >= from) && (!to || r.date <= to)).sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id)), [from, to])
-  const sum = (k: "masuk" | "keluar", pred: (r: Row) => boolean = () => true) => rows.filter((r) => r.kind === k && pred(r)).reduce((n, r) => n + r.jumlah, 0)
+  const reload = useCallback(async () => {
+    try {
+      const rows = await fetchFinanceRows()
+      cachedTotals = totalsOf(rows)
+      setSource(rows)
+      setLoadError("")
+    } catch (e) {
+      setLoadError((e as Error).message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+  useEffect(() => { void reload() }, [reload])
+
+  const rows = useMemo(() => source.filter((r) => (!from || r.date >= from) && (!to || r.date <= to)).sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id)), [source, from, to])
+  const sum = (k: "masuk" | "keluar", pred: (r: Txn) => boolean = () => true) => rows.filter((r) => r.kind === k && pred(r)).reduce((n, r) => n + r.jumlah, 0)
   const masuk = sum("masuk")
   const keluar = sum("keluar")
   const saldo = masuk - keluar
@@ -480,6 +688,8 @@ export function ReportTab({ me }: { me: string }) {
   return (
     <div>
       <H>LAPORAN KEUANGAN</H>
+      {loadError && <Banner tone="error">{loadError}</Banner>}
+      {loading && <div style={{ fontFamily: BB, fontSize: 14, color: "#aaa", marginBottom: 16 }}>Memuat data keuangan…</div>}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 20 }}>
         <input type="date" aria-label="Dari tanggal" className="tks-input" style={dateStyle} value={from} onChange={(e) => setFrom(e.target.value)} />
         <span style={{ color: "#888", fontFamily: BB }}>s.d.</span>

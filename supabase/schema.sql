@@ -16,7 +16,7 @@
 --
 -- Peta menu → tabel
 --   Akun ........................ profil                         (+ auth.users)
---   Peserta ..................... peserta, peserta_lomba
+--   Peserta ..................... peserta, peserta_lomba, peserta_feedback
 --   Riwayat medis ............... riwayat_medis, riwayat_medis_penyakit
 --   Kedatangan & keberangkatan .. grup_perjalanan, grup_perjalanan_anggota
 --   Pembayaran .................. pembayaran, pembayaran_peserta
@@ -85,8 +85,8 @@ create type public.nama_lomba as enum (
   'Tenis Meja',
   'Bulu Tangkis',
   'Catur',
-  'Pelatihan Kekaryaan',
-  'Seminar'
+  'Kekaryaan',
+  'Gapple'
 );
 
 create type public.babak_lomba as enum (
@@ -366,6 +366,9 @@ create table public.peserta (
   foto_path text,
   foto_nama text,
   foto_mime text,
+  ktp_path text,
+  ktp_nama text,
+  ktp_mime text,
   status public.status_verifikasi not null default 'Menunggu Verifikasi',
   catatan_admin text,
   diverifikasi_oleh uuid references public.profil (id) on delete set null,
@@ -375,7 +378,8 @@ create table public.peserta (
 );
 
 comment on table public.peserta is 'Menu Peserta (kontingen) dan verifikasi Peserta (admin registrasi).';
-comment on column public.peserta.diverifikasi_oleh is 'Akun staf yang terakhir menyetujui atau menolak.';
+comment on column public.peserta.ktp_path is 'Berkas KTP atau identitas diri di bucket ktp-peserta.';
+comment on column public.peserta.diverifikasi_oleh is 'Akun staf yang terakhir menyetujui peserta.';
 
 create index peserta_kontingen_idx on public.peserta (kontingen_id);
 create index peserta_status_idx on public.peserta (status);
@@ -451,6 +455,81 @@ create trigger peserta_lomba_updated_at
   before update on public.peserta_lomba
   for each row execute function public.set_updated_at();
 
+-- Peserta maksimal 2 lomba. Dua lomba hanya sah bila salah satunya Paduan Suara.
+create or replace function public.cek_batas_lomba()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+declare
+  jumlah integer;
+  selain integer;
+begin
+  select count(*) into jumlah
+  from public.peserta_lomba
+  where peserta_id = new.peserta_id
+    and lomba is distinct from new.lomba;
+  jumlah := jumlah + 1;
+
+  select count(*) into selain
+  from public.peserta_lomba
+  where peserta_id = new.peserta_id
+    and lomba::text <> 'Paduan Suara'
+    and lomba is distinct from new.lomba;
+  if new.lomba::text <> 'Paduan Suara' then
+    selain := selain + 1;
+  end if;
+
+  if jumlah > 2 then
+    raise exception 'Peserta hanya dapat mengikuti maksimal 2 lomba.';
+  end if;
+  if selain > 1 then
+    raise exception 'Selain Paduan Suara, peserta hanya boleh memilih satu lomba lain.';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger peserta_lomba_batas
+  before insert on public.peserta_lomba
+  for each row execute function public.cek_batas_lomba();
+
+create table public.peserta_feedback (
+  id uuid primary key default gen_random_uuid(),
+  peserta_id uuid not null references public.peserta (id) on delete cascade,
+  pesan text not null check (char_length(btrim(pesan)) >= 3),
+  dibuat_oleh uuid default auth.uid() references public.profil (id) on delete set null,
+  created_at timestamptz not null default now()
+);
+
+comment on table public.peserta_feedback is 'Catatan kekurangan data peserta. Dapat dikirim berkali-kali sampai peserta disetujui.';
+
+create index peserta_feedback_peserta_idx on public.peserta_feedback (peserta_id, created_at desc);
+
+create or replace function public.cek_feedback_peserta()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+declare
+  st public.status_verifikasi;
+begin
+  if not public.punya_peran('superuser', 'reg_admin') then
+    raise exception 'Feedback hanya dapat dikirim oleh admin registrasi';
+  end if;
+  select status into st from public.peserta where id = new.peserta_id;
+  if st is distinct from 'Menunggu Verifikasi' then
+    raise exception 'Feedback hanya dapat dikirim selama peserta belum disetujui';
+  end if;
+  new.pesan := btrim(new.pesan);
+  return new;
+end;
+$$;
+
+create trigger peserta_feedback_cek
+  before insert on public.peserta_feedback
+  for each row execute function public.cek_feedback_peserta();
+
 -- -----------------------------------------------------------------------------
 -- Riwayat medis
 -- -----------------------------------------------------------------------------
@@ -492,10 +571,10 @@ create table public.grup_perjalanan (
   kontingen_id uuid not null references public.profil (id) on delete restrict,
   nama text not null check (char_length(btrim(nama)) >= 2),
   dari_datang text not null default '',
-  lokasi_datang text not null,
+  lokasi_datang text not null default '',
   tanggal_datang date not null,
   jam_datang time not null,
-  lokasi_berangkat text not null,
+  lokasi_berangkat text not null default '',
   ke_berangkat text not null default '',
   tanggal_berangkat date not null,
   jam_berangkat time not null,
@@ -804,9 +883,11 @@ set search_path = public
 as $$
 declare
   nama_kontingen text;
+  jumlah_peserta integer;
 begin
   if new.status = 'Terverifikasi' then
     select nama into nama_kontingen from public.profil where id = new.kontingen_id;
+    select count(*) into jumlah_peserta from public.pembayaran_peserta where pembayaran_id = new.id;
     insert into public.transaksi (
       jenis, sumber, pembayaran_id, tanggal, kategori, pihak, uraian, jumlah, metode, created_by
     )
@@ -817,7 +898,7 @@ begin
       new.tanggal,
       'Pendaftaran Peserta',
       'Kontingen ' || coalesce(nama_kontingen, new.kontingen_id::text),
-      'Pembayaran pendaftaran',
+      'Pembayaran pendaftaran ' || jumlah_peserta || ' peserta',
       new.jumlah,
       'Transfer Bank',
       new.kontingen_id
@@ -826,6 +907,7 @@ begin
       set tanggal = excluded.tanggal,
           pihak = excluded.pihak,
           jumlah = excluded.jumlah,
+          uraian = excluded.uraian,
           updated_at = now();
   else
     delete from public.transaksi where pembayaran_id = new.id;
@@ -837,6 +919,28 @@ $$;
 create trigger pembayaran_jadi_pemasukan
   after insert or update of status, jumlah, tanggal, kontingen_id on public.pembayaran
   for each row execute function public.sinkron_pembayaran_keuangan();
+
+create or replace function public.sinkron_uraian_pendaftaran()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  bayar uuid := coalesce(new.pembayaran_id, old.pembayaran_id);
+begin
+  update public.transaksi
+  set uraian = 'Pembayaran pendaftaran ' || (
+    select count(*) from public.pembayaran_peserta where pembayaran_id = bayar
+  ) || ' peserta'
+  where pembayaran_id = bayar;
+  return coalesce(new, old);
+end;
+$$;
+
+create trigger pembayaran_peserta_uraian
+  after insert or delete on public.pembayaran_peserta
+  for each row execute function public.sinkron_uraian_pendaftaran();
 
 -- -----------------------------------------------------------------------------
 -- Sekretariat: rapat dan tugas
@@ -1611,6 +1715,38 @@ begin
 end;
 $$;
 
+-- Kartu publik: hanya data singkat yang boleh tampil saat QR ID card dipindai.
+create or replace function public.kartu_peserta(nomor text)
+returns table (
+  nomor_registrasi text,
+  nama text,
+  gereja text,
+  mupel text,
+  hotel text,
+  kamar text
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select
+    p.nomor_registrasi,
+    p.nama,
+    p.gereja,
+    p.mupel,
+    coalesce(h.nama, '') as hotel,
+    coalesce(k.nama, '') as kamar
+  from public.peserta p
+  left join public.penempatan t on t.peserta_id = p.id
+  left join public.kamar k on k.id = t.kamar_id
+  left join public.hotel h on h.id = k.hotel_id
+  where p.nomor_registrasi = btrim(nomor)
+  limit 1;
+$$;
+
+comment on function public.kartu_peserta(text) is 'Halaman publik hasil pindai QR ID card. Tidak menyertakan kontak, medis, atau berkas.';
+
 -- -----------------------------------------------------------------------------
 -- Row Level Security
 -- Kebijakan untuk perintah yang sama digabung dengan OR.
@@ -1619,6 +1755,7 @@ $$;
 alter table public.profil enable row level security;
 alter table public.peserta enable row level security;
 alter table public.peserta_lomba enable row level security;
+alter table public.peserta_feedback enable row level security;
 alter table public.riwayat_medis enable row level security;
 alter table public.riwayat_medis_penyakit enable row level security;
 alter table public.grup_perjalanan enable row level security;
@@ -1708,6 +1845,23 @@ create policy lomba_admin on public.peserta_lomba
 create policy lomba_baca_staf on public.peserta_lomba
   for select to authenticated
   using (public.is_staff());
+
+create policy feedback_baca_kontingen on public.peserta_feedback
+  for select to authenticated
+  using (
+    exists (
+      select 1 from public.peserta p
+      where p.id = peserta_id and p.kontingen_id = auth.uid()
+    )
+  );
+
+create policy feedback_baca_staf on public.peserta_feedback
+  for select to authenticated
+  using (public.is_staff());
+
+create policy feedback_tulis_admin on public.peserta_feedback
+  for insert to authenticated
+  with check (public.punya_peran('superuser', 'reg_admin'));
 
 -- medis: kontingen menulis, seluruh staf membaca (dibutuhkan saat acara)
 create policy medis_kontingen on public.riwayat_medis
@@ -1821,6 +1975,10 @@ create policy bayar_admin on public.pembayaran
   for select to authenticated
   using (public.punya_peran('superuser', 'reg_admin', 'bendahara'));
 
+create policy bayar_baca_staf on public.pembayaran
+  for select to authenticated
+  using (public.is_staff());
+
 create policy bayar_verifikasi on public.pembayaran
   for update to authenticated
   using (public.punya_peran('superuser', 'reg_admin'))
@@ -1844,6 +2002,10 @@ create policy bayar_peserta_kontingen on public.pembayaran_peserta
 create policy bayar_peserta_admin on public.pembayaran_peserta
   for select to authenticated
   using (public.punya_peran('superuser', 'reg_admin', 'bendahara'));
+
+create policy bayar_peserta_baca_staf on public.pembayaran_peserta
+  for select to authenticated
+  using (public.is_staff());
 
 create policy surat_kontingen on public.surat_tugas
   for all to authenticated
@@ -2140,6 +2302,9 @@ grant select on public.v_rekap_keuangan to authenticated;
 revoke all on function public.buka_portal_dokumen(text) from public;
 grant execute on function public.buka_portal_dokumen(text) to anon, authenticated;
 
+revoke all on function public.kartu_peserta(text) from public;
+grant execute on function public.kartu_peserta(text) to anon, authenticated;
+
 revoke all on function public.ganti_token_portal() from public;
 grant execute on function public.ganti_token_portal() to authenticated;
 
@@ -2149,6 +2314,9 @@ grant execute on function public.set_klasemen_final(boolean) to authenticated;
 revoke all on function public.set_biaya_pendaftaran(numeric) from public;
 grant execute on function public.set_biaya_pendaftaran(numeric) to authenticated;
 
+revoke all on function public.sinkron_pembayaran_keuangan() from public;
+revoke all on function public.sinkron_uraian_pendaftaran() from public;
+
 -- -----------------------------------------------------------------------------
 -- Storage
 -- Path yang disarankan: {auth.uid()}/{id-berkas}
@@ -2157,6 +2325,7 @@ grant execute on function public.set_biaya_pendaftaran(numeric) to authenticated
 insert into storage.buckets (id, name, public)
 values
   ('foto-peserta', 'foto-peserta', false),
+  ('ktp-peserta', 'ktp-peserta', false),
   ('foto-panitia', 'foto-panitia', false),
   ('bukti-pembayaran', 'bukti-pembayaran', false),
   ('surat-tugas', 'surat-tugas', false),
@@ -2170,7 +2339,7 @@ create policy storage_baca_staf on storage.objects
   for select to authenticated
   using (
     bucket_id in (
-      'foto-peserta', 'foto-panitia', 'bukti-pembayaran', 'surat-tugas',
+      'foto-peserta', 'ktp-peserta', 'foto-panitia', 'bukti-pembayaran', 'surat-tugas',
       'bukti-keuangan', 'lampiran-rapat', 'lampiran-anggaran', 'dokumen'
     )
     and public.is_staff()
@@ -2179,32 +2348,32 @@ create policy storage_baca_staf on storage.objects
 create policy storage_kontingen_baca on storage.objects
   for select to authenticated
   using (
-    bucket_id in ('foto-peserta', 'bukti-pembayaran', 'surat-tugas')
+    bucket_id in ('foto-peserta', 'ktp-peserta', 'bukti-pembayaran', 'surat-tugas')
     and (storage.foldername(name))[1] = auth.uid()::text
   );
 
 create policy storage_kontingen_tulis on storage.objects
   for insert to authenticated
   with check (
-    bucket_id in ('foto-peserta', 'bukti-pembayaran', 'surat-tugas')
+    bucket_id in ('foto-peserta', 'ktp-peserta', 'bukti-pembayaran', 'surat-tugas')
     and (storage.foldername(name))[1] = auth.uid()::text
   );
 
 create policy storage_kontingen_ubah on storage.objects
   for update to authenticated
   using (
-    bucket_id in ('foto-peserta', 'bukti-pembayaran', 'surat-tugas')
+    bucket_id in ('foto-peserta', 'ktp-peserta', 'bukti-pembayaran', 'surat-tugas')
     and (storage.foldername(name))[1] = auth.uid()::text
   )
   with check (
-    bucket_id in ('foto-peserta', 'bukti-pembayaran', 'surat-tugas')
+    bucket_id in ('foto-peserta', 'ktp-peserta', 'bukti-pembayaran', 'surat-tugas')
     and (storage.foldername(name))[1] = auth.uid()::text
   );
 
 create policy storage_kontingen_hapus on storage.objects
   for delete to authenticated
   using (
-    bucket_id in ('foto-peserta', 'bukti-pembayaran', 'surat-tugas')
+    bucket_id in ('foto-peserta', 'ktp-peserta', 'bukti-pembayaran', 'surat-tugas')
     and (storage.foldername(name))[1] = auth.uid()::text
   );
 

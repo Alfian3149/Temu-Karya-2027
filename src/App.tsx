@@ -8,6 +8,7 @@ import image1 from "@/imports/image-1.png"
 import image2 from "@/imports/image-2.png"
 import { useAuth, LoginPage, RegistrationPage, ProfilePage, isStaff, isMupel, mupelText, ROLE_LABEL, type User } from "@/Account"
 import { AdminPanel } from "@/Admin"
+import { PublicPeserta, KARTU_PREFIX } from "@/PesertaPublic"
 
 // ── Style tokens ───────────────────────────────────────────────────────────────
 const BC = "'Barlow Condensed', sans-serif"
@@ -146,7 +147,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "Apa saja dokumen yang perlu disiapkan untuk registrasi?",
-    a: "Peserta wajib menyiapkan: Surat Rekomendasi dari Majelis Jemaat, KTP/Identitas Diri, bukti transfer biaya pendaftaran, dan pas foto terbaru 3x4. Dokumen diunggah melalui portal pendaftaran atau dikirim ke sekretariat.",
+    a: "Peserta wajib menyiapkan: Surat Rekomendasi dari Majelis Jemaat, KTP/Identitas Diri, bukti transfer biaya pendaftaran, dan pas foto terbaru 3x4. Foto dan KTP diunggah pada formulir peserta. Surat tugas dan bukti transfer diunggah melalui portal pendaftaran.",
   },
   {
     q: "Berapa biaya pendaftaran TKS 2027?",
@@ -2272,7 +2273,7 @@ function Registration({
               </div>
               {[
                 { step: "01", title: "Buat Akun & Login", desc: "Daftar akun baru atau masuk dengan akun yang sudah ada" },
-                { step: "02", title: "Isi Formulir Online", desc: "Lengkapi data peserta, unggah foto dan surat tugas" },
+                { step: "02", title: "Isi Formulir Online", desc: "Lengkapi data peserta, unggah foto, KTP, dan surat tugas" },
                 { step: "03", title: "Kirim Pendaftaran", desc: "Dapatkan nomor pendaftaran dan pantau status verifikasi" },
                 { step: "04", title: "Konfirmasi Pembayaran", desc: "Transfer biaya dan kirim bukti ke sekretariat" },
                 { step: "05", title: "Terima ID Peserta", desc: "Panitia mengirimkan nomor ID dan informasi acara" },
@@ -2845,14 +2846,14 @@ function Footer() {
 
 // ── App ────────────────────────────────────────────────────────────────────────
 export default function App() {
-  const route = () => (location.hash.startsWith(SHARE_PREFIX) ? "minutes" : location.hash.startsWith(DOC_PREFIX) ? "docs" : location.hash === SCORE_LIVE || location.hash.startsWith(SCORE_SNAP) ? "score" : "")
+  const route = () => (location.hash.startsWith(SHARE_PREFIX) ? "minutes" : location.hash.startsWith(DOC_PREFIX) ? "docs" : location.hash === SCORE_LIVE || location.hash.startsWith(SCORE_SNAP) ? "score" : location.hash.startsWith(KARTU_PREFIX) ? "kartu" : "")
   const [shared, setShared] = useState(route)
   useEffect(() => {
     const f = () => setShared(route())
     window.addEventListener("hashchange", f)
     return () => window.removeEventListener("hashchange", f)
   }, [])
-  return shared === "minutes" ? <SharedMinutes /> : shared === "docs" ? <DocsPortal /> : shared === "score" ? <PublicScoreboard key={location.hash.slice(0, 40)} /> : <MainApp />
+  return shared === "minutes" ? <SharedMinutes /> : shared === "docs" ? <DocsPortal /> : shared === "score" ? <PublicScoreboard key={location.hash.slice(0, 40)} /> : shared === "kartu" ? <PublicPeserta agenda={RUNDOWN} /> : <MainApp />
 }
 
 function MainApp() {

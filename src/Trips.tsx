@@ -22,6 +22,7 @@ const BB = "'Barlow', sans-serif"
 const O = "#FF6D00"
 
 const when = (trip: Trip) => `${fmtDate(trip.tanggal)} · ${trip.jam}`
+const routeText = (trip: Trip) => (trip.leg === "datang" ? trip.dari || "-" : trip.ke || "-")
 
 function TripTable({ trip }: { trip: Trip }) {
   const cell = { border: "1px solid #ccc", padding: "6px 8px", textAlign: "left" as const, fontSize: 12 }
@@ -29,7 +30,7 @@ function TripTable({ trip }: { trip: Trip }) {
     <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: BB, color: "#111" }}>
       <thead>
         <tr>
-          {["No", "Nama Peserta", "Asal Mupel", "Dari Lokasi", "Ke Lokasi", "Tanggal & Jam", "Diorganisir Oleh", "Kendaraan"].map((h) => (
+          {["No", "Nama Peserta", "Asal Mupel", trip.leg === "datang" ? "Dari Lokasi" : "Ke Lokasi", "Tanggal & Jam", "Diorganisir Oleh", "Kendaraan"].map((h) => (
             <th key={h} style={{ ...cell, background: "#f3f3f3", fontFamily: BC, letterSpacing: 0.5 }}>{h}</th>
           ))}
         </tr>
@@ -40,8 +41,7 @@ function TripTable({ trip }: { trip: Trip }) {
             <td style={cell}>{i + 1}</td>
             <td style={cell}>{p.nama}</td>
             <td style={cell}>{mupelText(p.mupel)}</td>
-            <td style={cell}>{trip.dari || "-"}</td>
-            <td style={cell}>{trip.ke || "-"}</td>
+            <td style={cell}>{routeText(trip)}</td>
             <td style={cell}>{when(trip)}</td>
             <td style={cell}>{trip.organizer}</td>
             <td style={cell}>{trip.kendaraan || "-"}</td>
@@ -162,7 +162,7 @@ export function TripSchedule({ trans }: { trans: Trans[] }) {
                 <div style={{ fontFamily: BC, fontWeight: 700, fontSize: 12, letterSpacing: 2, color: O }}>{trip.jenis.toUpperCase()} · {trip.nama}</div>
                 <Chip tone={trip.status === "Selesai" ? "green" : "orange"}>{trip.status.toUpperCase()}</Chip>
               </div>
-              <div style={{ fontFamily: BC, fontWeight: 800, fontSize: 22, color: "#fff", margin: "4px 0" }}>{trip.dari || "-"} → {trip.ke || "-"}</div>
+              <div style={{ fontFamily: BC, fontWeight: 800, fontSize: 22, color: "#fff", margin: "4px 0" }}>{routeText(trip)}</div>
               <div style={{ fontFamily: BB, fontSize: 13, color: "#ccc", lineHeight: 1.7 }}>
                 {when(trip)} · {trip.passengers.length} peserta · Diorganisir {trip.organizer} · Kendaraan {trip.kendaraan || "belum ditentukan"}
               </div>
@@ -184,7 +184,7 @@ export function TripSchedule({ trans }: { trans: Trans[] }) {
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
               <div>
                 <div style={{ fontFamily: BC, fontWeight: 700, fontSize: 12, letterSpacing: 2, color: O }}>{detail.jenis.toUpperCase()} · {detail.nama}</div>
-                <h2 style={{ fontFamily: BC, fontWeight: 800, fontSize: 28, color: "#fff", margin: "4px 0" }}>{detail.dari || "-"} → {detail.ke || "-"}</h2>
+                <h2 style={{ fontFamily: BC, fontWeight: 800, fontSize: 28, color: "#fff", margin: "4px 0" }}>{routeText(detail)}</h2>
                 <div style={{ fontFamily: BB, fontSize: 14, color: "#ccc" }}>{when(detail)} · Diorganisir oleh {detail.organizer}</div>
               </div>
               <Chip tone={detail.status === "Selesai" ? "green" : "orange"}>{detail.status.toUpperCase()}</Chip>

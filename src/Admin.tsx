@@ -25,6 +25,9 @@ import {
   setLombaStatus,
   addPesertaLomba,
   removePesertaLomba,
+  addPesertaFeedback,
+  lombaRuleError,
+  FeedbackNotes,
   isStaff,
   isLocked,
   LOCK_MSG,
@@ -52,6 +55,7 @@ import {
   LOMBA,
   type Registration,
   type Payment,
+  type PesertaFeedback,
   type Doc,
   type Hotel,
   type Room,
@@ -66,7 +70,7 @@ import { TripSchedule } from "@/Trips"
 import { DocumentsTab, docStats } from "@/Documents"
 import { BudgetsTab, BudgetRecapTab, budgetStats } from "@/Budget"
 import { MeetingsTab, TasksTab, secretaryStats } from "@/Secretary"
-import { IncomeTab, ExpenseTab, ReportTab, financeTotals } from "@/Finance"
+import { IncomeTab, ExpenseTab, ReportTab, financeTotals, refreshFinanceTotals, type FinanceTotals } from "@/Finance"
 import { CommitteeAdmin, IdCardPreview, ROLE_COLOR, type CardData } from "@/IdCards"
 
 const BC = "'Barlow Condensed', sans-serif"
@@ -116,25 +120,38 @@ function downloadCsv(name: string, rows: (string | number)[][]) {
 // ── Shared widgets ─────────────────────────────────────────────────────────────
 type Verif = { status?: string; note?: string; by?: string; at?: string }
 
-function VerifyControls({ v, onSet, superuser }: { v: Verif; onSet: (status: string, note: string) => void; superuser: boolean }) {
-  const [rejecting, setRejecting] = useState(false)
+function VerifyControls({ v, onSet, superuser, onFeedback, feedbacks }: { v: Verif; onSet: (status: string, note: string) => void; superuser: boolean; onFeedback?: (note: string) => void; feedbacks?: PesertaFeedback[] }) {
+  const [writing, setWriting] = useState(false)
   const [note, setNote] = useState("")
   const [err, setErr] = useState("")
   const status = v.status ?? ST.wait
   const locked = isLocked(status)
   const who = verdictText(status, v.by, v.at)
+  const feedbackMode = !!onFeedback
+  const send = () => {
+    if (note.trim().length < 3) return setErr(feedbackMode ? "Feedback minimal 3 karakter." : "Isi alasan.")
+    if (feedbackMode) onFeedback?.(note.trim())
+    else onSet(ST.no, note.trim())
+    setWriting(false)
+    setNote("")
+  }
   return (
     <div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <StatusChip s={status} />
         {!locked && (
-          <button className="tks-btn" onClick={() => { setRejecting(false); onSet(ST.ok, "") }} style={{ ...smallBtn, padding: "6px 14px", fontSize: 12, color: "#fff", background: "#2e7d32", border: "none" }}>
+          <button className="tks-btn" onClick={() => { setWriting(false); onSet(ST.ok, "") }} style={{ ...smallBtn, padding: "6px 14px", fontSize: 12, color: "#fff", background: "#2e7d32", border: "none" }}>
             SETUJUI
           </button>
         )}
-        {!locked && !rejecting && (
-          <button className="tks-btn" onClick={() => setRejecting(true)} style={{ ...smallBtn, padding: "6px 14px", fontSize: 12, color: "#fff", background: "#c62828", border: "none" }}>
+        {!locked && !writing && !feedbackMode && (
+          <button className="tks-btn" onClick={() => setWriting(true)} style={{ ...smallBtn, padding: "6px 14px", fontSize: 12, color: "#fff", background: "#c62828", border: "none" }}>
             TOLAK
+          </button>
+        )}
+        {!locked && !writing && feedbackMode && (
+          <button className="tks-btn" onClick={() => setWriting(true)} style={{ ...smallBtn, padding: "6px 14px", fontSize: 12, color: "#fff", background: O, border: "none" }}>
+            FEEDBACK
           </button>
         )}
         {locked && superuser && (
@@ -145,14 +162,19 @@ function VerifyControls({ v, onSet, superuser }: { v: Verif; onSet: (status: str
       </div>
       {who && <div style={{ fontFamily: BB, fontSize: 13, color: "#ddd", marginTop: 6 }}>{who}</div>}
       {locked && !superuser && <div style={{ fontFamily: BB, fontSize: 13, color: "#ffb74d", marginTop: 6 }}>{LOCK_MSG}</div>}
-      {status === ST.no && v.note && (
+      {!feedbackMode && status === ST.no && v.note && (
         <div style={{ fontFamily: BB, fontSize: 13, color: "#ef9a9a", marginTop: 6 }}>Alasan: {v.note}</div>
       )}
-      {rejecting && (
+      {feedbackMode && <FeedbackNotes items={feedbacks} hint={false} />}
+      {writing && (
         <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-          <input className="tks-input" aria-label="Alasan penolakan" style={{ ...inputStyle, flex: 1, minWidth: 180, padding: "8px 12px", fontSize: 14 }} value={note} onChange={(e) => { setNote(e.target.value); setErr("") }} placeholder="Alasan penolakan (wajib)" />
-          <button className="tks-btn" onClick={() => { if (!note.trim()) return setErr("Isi alasan."); onSet(ST.no, note.trim()); setRejecting(false); setNote("") }} style={{ ...smallBtn, padding: "8px 16px", fontSize: 12, color: "#fff", background: "#c62828", border: "none" }}>KIRIM</button>
-          <button className="tks-btn" onClick={() => setRejecting(false)} style={{ ...smallBtn, padding: "8px 16px", fontSize: 12, color: "#ccc", background: "none", border: "1px solid #666" }}>BATAL</button>
+          {feedbackMode ? (
+            <textarea className="tks-input" aria-label="Feedback data peserta" rows={3} style={{ ...inputStyle, flex: 1, minWidth: 220, padding: "8px 12px", fontSize: 14, resize: "vertical" }} value={note} onChange={(e) => { setNote(e.target.value); setErr("") }} placeholder="Data yang masih kurang atau perlu diperbaiki" />
+          ) : (
+            <input className="tks-input" aria-label="Alasan penolakan" style={{ ...inputStyle, flex: 1, minWidth: 180, padding: "8px 12px", fontSize: 14 }} value={note} onChange={(e) => { setNote(e.target.value); setErr("") }} placeholder="Alasan penolakan (wajib)" />
+          )}
+          <button className="tks-btn" onClick={send} style={{ ...smallBtn, padding: "8px 16px", fontSize: 12, color: "#fff", background: feedbackMode ? O : "#c62828", border: "none" }}>KIRIM</button>
+          <button className="tks-btn" onClick={() => setWriting(false)} style={{ ...smallBtn, padding: "8px 16px", fontSize: 12, color: "#ccc", background: "none", border: "1px solid #666" }}>BATAL</button>
           {err && <span role="alert" style={{ fontFamily: BB, fontSize: 12, color: "#ff8a65", width: "100%" }}>{err}</span>}
         </div>
       )}
@@ -188,14 +210,14 @@ const Small = ({ children }: { children: React.ReactNode }) => (
 const matches = (q: string, ...vals: (string | undefined)[]) =>
   !q || vals.some((v) => v?.toLowerCase().includes(q.toLowerCase()))
 
-type TabProps = { data: Data; refresh: () => void | Promise<void>; me: User }
+type TabProps = { data: Data; refresh: () => void | Promise<void>; me: User; finance: FinanceTotals }
 
 const ownerName = (d: Data, email: string) => d.users.find((u) => u.email === email)?.name ?? email
 
 // ── Dashboard ──────────────────────────────────────────────────────────────────
-function Dashboard({ data, me }: TabProps) {
+function Dashboard({ data, me, finance }: TabProps) {
   const { regs, pays, docs, rooms, trans } = data
-  const fin = financeTotals()
+  const fin = finance
   const sek = secretaryStats()
   const bgt = budgetStats()
   const dok = docStats()
@@ -248,6 +270,91 @@ function Dashboard({ data, me }: TabProps) {
   )
 }
 
+function DetailLine({ k, v }: { k: string; v: React.ReactNode }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(120px, 180px) 1fr", gap: 8, padding: "7px 0", borderBottom: "1px solid #3a3a3a" }}>
+      <div style={{ fontFamily: BC, fontWeight: 700, fontSize: 12, letterSpacing: 1.2, color: "#999" }}>{k}</div>
+      <div style={{ fontFamily: BB, fontSize: 14, color: "#eee", overflowWrap: "anywhere" }}>{v || "-"}</div>
+    </div>
+  )
+}
+
+function PesertaDetail({ r, pays, owner, onClose }: { r: Registration; pays: Payment[]; owner: string; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose() }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [onClose])
+  const mine = pays.filter((p) => p.regIds.includes(r.id))
+  const med = r.medical
+  return (
+    <div role="dialog" aria-modal="true" aria-label={`Detail ${r.nama}`} onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.72)", zIndex: 40, overflow: "auto", padding: "32px 16px" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ ...cardStyle, maxWidth: 880, margin: "0 auto", padding: "24px clamp(16px,3vw,28px)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 18 }}>
+          <div>
+            <div style={{ fontFamily: BC, fontWeight: 700, fontSize: 12, letterSpacing: 3, color: O }}>{r.regNo} · {owner.toUpperCase()}</div>
+            <h2 style={{ fontFamily: BC, fontWeight: 800, fontSize: 32, color: "#fff", margin: "4px 0 0" }}>{r.nama}</h2>
+          </div>
+          <button type="button" className="tks-btn" onClick={onClose} style={{ ...smallBtn, color: "#ddd", background: "none", border: "1px solid #666" }}>TUTUP</button>
+        </div>
+
+        <H>DATA PESERTA</H>
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 12 }}>
+          <img src={r.foto} alt={`Foto ${r.nama}`} style={{ width: 96, height: 124, objectFit: "cover", border: `2px solid ${O}` }} />
+          {r.ktp && r.ktpMime !== "application/pdf" && <a href={r.ktp} target="_blank" rel="noreferrer"><img src={r.ktp} alt={`KTP ${r.nama}`} style={{ width: 160, height: 104, objectFit: "cover", border: `1px solid ${O}` }} /></a>}
+          {r.ktp && r.ktpMime === "application/pdf" && <a href={r.ktp} target="_blank" rel="noreferrer" style={{ color: O, fontFamily: BB }}>Buka berkas KTP (PDF)</a>}
+          {!r.ktp && <div style={{ fontFamily: BB, fontSize: 14, color: "#ff8a65" }}>KTP belum diunggah.</div>}
+        </div>
+        <DetailLine k="STATUS" v={<StatusChip s={r.status} />} />
+        <DetailLine k="JENIS" v={r.jenis} />
+        <DetailLine k="JENIS KELAMIN" v={r.gender} />
+        <DetailLine k="TEMPAT, TGL LAHIR" v={`${r.tempat}, ${fmtDate(r.tanggal)}`} />
+        <DetailLine k="GEREJA" v={r.gereja} />
+        <DetailLine k="MUPEL" v={mupelText(r.mupel)} />
+        <DetailLine k="WHATSAPP" v={r.wa} />
+        <DetailLine k="UKURAN KAOS" v={r.ukuran} />
+        <DetailLine k="LOMBA" v={(r.lomba ?? []).join(", ")} />
+        <DetailLine k="KONTINGEN" v={owner} />
+        <FeedbackNotes items={r.feedback} hint={false} />
+
+        <div style={{ height: 22 }} />
+        <H>RIWAYAT MEDIS</H>
+        {!med ? <Empty>Riwayat medis belum diisi.</Empty> : (
+          <div>
+            <DetailLine k="GOLONGAN DARAH" v={med.golongan} />
+            <DetailLine k="RIWAYAT PENYAKIT" v={med.penyakit.length ? med.penyakit.join(", ") : "Tidak ada"} />
+            <DetailLine k="PENYAKIT LAIN" v={med.penyakitLain} />
+            <DetailLine k="ALERGI" v={med.alergi} />
+            <DetailLine k="OBAT RUTIN" v={med.obat} />
+            <DetailLine k="RAWAT INAP" v={med.riwayatRawat} />
+            <DetailLine k="KONDISI KHUSUS" v={med.kondisiKhusus} />
+            <DetailLine k="KONTAK DARURAT" v={`${med.kontakNama} · ${med.kontakHubungan} · ${med.kontakTelp}`} />
+          </div>
+        )}
+
+        <div style={{ height: 22 }} />
+        <H>PEMBAYARAN</H>
+        {mine.length === 0 ? <Empty>Belum ada bukti pembayaran untuk peserta ini.</Empty> : (
+          <div style={{ display: "grid", gap: 10 }}>
+            {mine.map((p) => (
+              <article key={p.id} style={{ background: "#262626", border: "1px solid #4a4a4a", padding: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  <strong style={{ fontFamily: BC, fontSize: 24, color: "#fff" }}>{rupiah(p.amount)}</strong>
+                  <StatusChip s={p.status} />
+                </div>
+                <div style={{ fontFamily: BB, fontSize: 13, color: "#ccc", marginTop: 6 }}>
+                  {fmtDate(p.date)} · <FileLink f={p.file} /> ({fmtSize(p.file.size)}){p.note ? ` · ${p.note}` : ""}
+                </div>
+                {p.adminNote && <div style={{ fontFamily: BB, fontSize: 13, color: "#ffcc80", marginTop: 6 }}>{p.adminNote}</div>}
+              </article>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Registration admin ─────────────────────────────────────────────────────────
 function ParticipantsAdmin({ data, refresh, me }: TabProps) {
   const [print, setPrint] = useState<CardData[] | null>(null)
@@ -265,7 +372,9 @@ function ParticipantsAdmin({ data, refresh, me }: TabProps) {
   const [status, setStatus] = useState("")
   const [jenis, setJenis] = useState("")
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [detailId, setDetailId] = useState<string | null>(null)
   const [err, setErr] = useState("")
+  const canVerify = me.role === "superuser" || me.role === "reg_admin"
 
   const list = data.regs
     .filter((r) => (!status || r.status === status) && (!jenis || r.jenis === jenis))
@@ -287,14 +396,22 @@ function ParticipantsAdmin({ data, refresh, me }: TabProps) {
           <option value="">Semua jenis</option>
           {JENIS.map((j) => <option key={j}>{j}</option>)}
         </select>
-        <button className="tks-btn" onClick={() => downloadCsv("peserta-tks2027.csv", [["No Reg", "Nama", "Jenis", "Gender", "Tempat Lahir", "Tanggal Lahir", "Gereja", "Mupel", "WhatsApp", "Kaos", "Lomba", "Status", "Kontingen"], ...list.map((r) => [r.regNo, r.nama, r.jenis, r.gender, r.tempat, r.tanggal, r.gereja, mupelText(r.mupel), r.wa, r.ukuran, (r.lomba ?? []).join("; "), r.status, ownerName(data, r.email)])])} style={{ ...smallBtn, color: O, background: "none", border: `1px solid ${O}` }}>
+        {canVerify && <button className="tks-btn" onClick={() => downloadCsv("peserta-tks2027.csv", [["No Reg", "Nama", "Jenis", "Gender", "Tempat Lahir", "Tanggal Lahir", "Gereja", "Mupel", "WhatsApp", "Kaos", "Lomba", "KTP", "Status", "Kontingen"], ...list.map((r) => [r.regNo, r.nama, r.jenis, r.gender, r.tempat, r.tanggal, r.gereja, mupelText(r.mupel), r.wa, r.ukuran, (r.lomba ?? []).join("; "), r.ktpPath ? "Ada" : "Belum", r.status, ownerName(data, r.email)])])} style={{ ...smallBtn, color: O, background: "none", border: `1px solid ${O}` }}>
           EXPORT CSV
-        </button>
-        <button className="tks-btn" disabled={!list.length} onClick={() => setPrint(list.map(toCard))} style={{ ...smallBtn, color: "#fff", background: O, border: "none" }}>
+        </button>}
+        {canVerify && <button className="tks-btn" disabled={!list.length} onClick={() => setPrint(list.map(toCard))} style={{ ...smallBtn, color: "#fff", background: O, border: "none" }}>
           CETAK ID CARD ({list.length})
-        </button>
+        </button>}
       </FilterBar>
       {print && <IdCardPreview cards={print} onClose={() => setPrint(null)} />}
+      {detailId && data.regs.some((r) => r.id === detailId) && (
+        <PesertaDetail
+          r={data.regs.find((r) => r.id === detailId)!}
+          pays={data.pays}
+          owner={ownerName(data, data.regs.find((r) => r.id === detailId)!.email)}
+          onClose={() => setDetailId(null)}
+        />
+      )}
 
       {list.length === 0 ? <Empty>Tidak ada peserta yang cocok.</Empty> : (
         <div style={{ display: "grid", gap: 12 }}>
@@ -313,11 +430,26 @@ function ParticipantsAdmin({ data, refresh, me }: TabProps) {
                     <strong style={{ color: "#fff" }}>{r.jenis}</strong> · {r.gender} · {r.tempat}, {fmtDate(r.tanggal)} · {r.gereja} · Mupel {mupelText(r.mupel)}
                     <br />
                     WA {r.wa || "-"} · Kaos {r.ukuran || "-"} · Lomba: {(r.lomba ?? []).join(", ") || "-"}
+                    {!r.ktpPath && <> · <span style={{ color: "#ff8a65" }}>KTP belum diunggah</span></>}
                   </div>
-                  <VerifyControls superuser={me.role === "superuser"} v={{ status: r.status, note: r.adminNote, by: r.verifiedBy, at: r.verifiedAt }} onSet={(s, n) => run(refresh, () => setPesertaStatus(r.id, s, n), setErr)} />
+                  {canVerify ? (
+                    <VerifyControls
+                      superuser={me.role === "superuser"}
+                      v={{ status: r.status, note: r.adminNote, by: r.verifiedBy, at: r.verifiedAt }}
+                      feedbacks={r.feedback}
+                      onFeedback={(note) => run(refresh, () => addPesertaFeedback(r.id, note), setErr)}
+                      onSet={(s, n) => run(refresh, () => setPesertaStatus(r.id, s, n), setErr)}
+                    />
+                  ) : (
+                    <div>
+                      <StatusChip s={r.status} />
+                      <FeedbackNotes items={r.feedback} hint={false} />
+                    </div>
+                  )}
                   <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "center", flexWrap: "wrap" }}>
-                    <button className="tks-btn" onClick={() => setPrint([toCard(r)])} style={{ ...smallBtn, padding: "8px 14px", fontSize: 12, color: O, background: "none", border: `1px solid ${O}` }}>ID CARD</button>
-                    {!isLocked(r.status) && <DeleteControl id={r.id} confirmId={confirmId} setConfirmId={setConfirmId} label="Hapus peserta ini?" onDelete={() => { setConfirmId(null); run(refresh, () => deletePesertaAdmin(r.id), setErr) }} />}
+                    <button className="tks-btn" onClick={() => setDetailId(r.id)} style={{ ...smallBtn, padding: "8px 14px", fontSize: 12, color: "#fff", background: O, border: "none" }}>LIHAT DETAIL</button>
+                    {canVerify && <button className="tks-btn" onClick={() => setPrint([toCard(r)])} style={{ ...smallBtn, padding: "8px 14px", fontSize: 12, color: O, background: "none", border: `1px solid ${O}` }}>ID CARD</button>}
+                    {canVerify && !isLocked(r.status) && <DeleteControl id={r.id} confirmId={confirmId} setConfirmId={setConfirmId} label="Hapus peserta ini?" onDelete={() => { setConfirmId(null); run(refresh, () => deletePesertaAdmin(r.id), setErr) }} />}
                   </div>
                 </div>
               </article>
@@ -410,7 +542,7 @@ function RaceAdmin({ data, refresh, me }: TabProps) {
   const [add, setAdd] = useState("")
   const [err, setErr] = useState("")
   const entries = data.regs.filter((r) => r.lomba?.includes(race))
-  const candidates = data.regs.filter((r) => !r.lomba?.includes(race) && !isLocked(r.status))
+  const candidates = data.regs.filter((r) => !r.lomba?.includes(race) && !isLocked(r.status) && !lombaRuleError([...(r.lomba ?? []), race]))
   const statusOf = (r: Registration, l: string) => r.lombaStatus?.[l]?.status ?? ST.wait
 
   const setStatus = (r: Registration, s: string, note: string) => {
@@ -794,7 +926,7 @@ const ALL_STAFF: Role[] = ["superuser", "reg_admin", "race_admin", "accom_admin"
 
 const TABS: TabDef[] = [
   { id: "dash", short: "RINGKAS", label: "RINGKASAN", roles: ALL_STAFF, render: (p) => <Dashboard {...p} /> },
-  { id: "peserta", short: "PESERTA", label: "PESERTA", roles: REG, render: (p) => <ParticipantsAdmin {...p} /> },
+  { id: "peserta", short: "PESERTA", label: "PESERTA", roles: ALL_STAFF, render: (p) => <ParticipantsAdmin {...p} /> },
   { id: "bayar", short: "BAYAR", label: "PEMBAYARAN", roles: REG, render: (p) => <PaymentsAdmin {...p} /> },
   { id: "surat", short: "SURAT", label: "SURAT TUGAS", roles: REG, render: (p) => <DocsAdmin {...p} /> },
   { id: "lomba", short: "LOMBA", label: "LOMBA", roles: RACE, render: (p) => <RaceAdmin {...p} /> },
@@ -817,17 +949,19 @@ const TABS: TabDef[] = [
 
 export function AdminPanel({ user }: { user: User }) {
   const [data, setData] = useState<Data>(emptyData)
+  const [finance, setFinance] = useState<FinanceTotals>(financeTotals())
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState("")
   const refresh = useCallback(async () => {
-    try {
-      setData(await loadAdmin())
+    const [adminResult, financeResult] = await Promise.allSettled([loadAdmin(), refreshFinanceTotals()])
+    if (adminResult.status === "fulfilled") {
+      setData(adminResult.value)
       setLoadError("")
-    } catch (e) {
-      setLoadError((e as Error).message)
-    } finally {
-      setLoading(false)
+    } else {
+      setLoadError(adminResult.reason instanceof Error ? adminResult.reason.message : "Gagal memuat data admin.")
     }
+    if (financeResult.status === "fulfilled") setFinance(financeResult.value)
+    setLoading(false)
   }, [])
   useEffect(() => { void refresh() }, [refresh])
   const tabs = TABS.filter((t) => t.roles.includes(user.role))
@@ -839,7 +973,7 @@ export function AdminPanel({ user }: { user: User }) {
     bayar: waiting(data.pays),
     surat: waiting(data.docs),
     lomba: data.regs.reduce((n, r) => n + (r.lomba ?? []).filter((l) => (r.lombaStatus?.[l]?.status ?? ST.wait) === ST.wait).length, 0),
-    keluar: financeTotals().tanpaBukti,
+    keluar: finance.tanpaBukti,
     tugas: secretaryStats().terlambat,
     setuju: budgetStats().menunggu,
     ajuan: budgetStats().revisi(user.email),
@@ -889,7 +1023,7 @@ export function AdminPanel({ user }: { user: User }) {
         {loadError && <Banner tone="error">{loadError}</Banner>}
         {loading ? (
           <div style={{ fontFamily: BB, fontSize: 14, color: "#aaa" }}>Memuat data admin…</div>
-        ) : current.render({ data, refresh, me: user })}
+        ) : current.render({ data, refresh, me: user, finance })}
           </div>
         </div>
       </div>

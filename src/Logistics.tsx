@@ -7,7 +7,6 @@ import {
   PrimaryButton,
   Banner,
   isLocked,
-  LOCK_MSG,
   verdictText,
   Chip,
   DeleteControl,
@@ -178,7 +177,6 @@ export function MedicalTab({ regs, refresh }: { regs: Registration[]; refresh: (
                     {r.medical && <> · Gol. darah {r.medical.golongan}{r.medical.penyakit.length ? ` · ${r.medical.penyakit.join(", ")}` : " · tanpa riwayat penyakit"}{r.medical.alergi && ` · alergi: ${r.medical.alergi}`}</>}
                     {verdictText(r.status, r.verifiedBy, r.verifiedAt) && <> · {verdictText(r.status, r.verifiedBy, r.verifiedAt)}</>}
                   </div>
-                  {isLocked(r.status) && <div style={{ fontFamily: BB, fontSize: 12, color: "#ffb74d" }}>{LOCK_MSG}</div>}
                 </div>
                 <Chip tone={r.medical ? "green" : "gray"}>{r.medical ? "SUDAH DIISI" : "BELUM DIISI"}</Chip>
                 <button className="tks-btn" disabled={isLocked(r.status)} onClick={() => { setSaved(""); setEditId(r.id) }} style={{ ...smallBtn, color: "#fff", background: O, border: "none", opacity: isLocked(r.status) ? 0.45 : 1 }}>
@@ -194,8 +192,6 @@ export function MedicalTab({ regs, refresh }: { regs: Registration[]; refresh: (
 }
 
 // ── Arrival / departure groups ─────────────────────────────────────────────────
-const LOKASI = ["Bandara Soekarno-Hatta", "Bandara Halim Perdanakusuma", "Stasiun Gambir", "Stasiun Pasar Senen", "Pelabuhan Tanjung Priok", "Terminal Pulo Gebang"]
-
 type TForm = Omit<TravelGroup, "id" | "owner" | "createdAt">
 const emptyT = (): TForm => ({ nama: "", regIds: [], dariDatang: "", lokasiDatang: "", tglDatang: "", jamDatang: "", lokasiBerangkat: "", keBerangkat: "", tglBerangkat: "", jamBerangkat: "" })
 
@@ -212,10 +208,8 @@ function TravelForm({ user, regs, groups, existing, onClose, onSaved }: { user: 
     if (f.nama.trim().length < 2) er.nama = "Beri nama grup."
     if (!f.regIds.length) er.regIds = "Pilih minimal satu peserta."
     if (!f.dariDatang.trim()) er.dariDatang = "Wajib diisi."
-    if (!f.lokasiDatang.trim()) er.lokasiDatang = "Wajib diisi."
     if (!f.tglDatang) er.tglDatang = "Wajib diisi."
     if (!f.jamDatang) er.jamDatang = "Wajib diisi."
-    if (!f.lokasiBerangkat.trim()) er.lokasiBerangkat = "Wajib diisi."
     if (!f.keBerangkat.trim()) er.keBerangkat = "Wajib diisi."
     if (!f.tglBerangkat) er.tglBerangkat = "Wajib diisi."
     else if (f.tglDatang && f.tglBerangkat < f.tglDatang) er.tglBerangkat = "Tanggal keberangkatan tidak boleh sebelum kedatangan."
@@ -228,8 +222,8 @@ function TravelForm({ user, regs, groups, existing, onClose, onSaved }: { user: 
         ...f,
         nama: f.nama.trim(),
         dariDatang: f.dariDatang.trim(),
-        lokasiDatang: f.lokasiDatang.trim(),
-        lokasiBerangkat: f.lokasiBerangkat.trim(),
+        lokasiDatang: "",
+        lokasiBerangkat: "",
         keBerangkat: f.keBerangkat.trim(),
         id: existing?.id ?? "",
         owner: user.email,
@@ -268,17 +262,10 @@ function TravelForm({ user, regs, groups, existing, onClose, onSaved }: { user: 
         </div>
       </Field>
 
-      <datalist id="lokasi-jkt">{LOKASI.map((l) => <option key={l} value={l} />)}</datalist>
-
       {sectionTitle("KEDATANGAN DI JAKARTA")}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="card-grid">
-        <Field label="Dari Lokasi" htmlFor="tg-dd" error={errs.dariDatang}>
-          <input id="tg-dd" className="tks-input" style={inputStyle} value={f.dariDatang} onChange={(e) => set("dariDatang", e.target.value)} placeholder="Kota atau bandara asal" />
-        </Field>
-        <Field label="Ke Lokasi" htmlFor="tg-ld" error={errs.lokasiDatang}>
-          <input id="tg-ld" list="lokasi-jkt" className="tks-input" style={inputStyle} value={f.lokasiDatang} onChange={(e) => set("lokasiDatang", e.target.value)} placeholder="Bandara, stasiun, terminal…" />
-        </Field>
-      </div>
+      <Field label="Dari Lokasi" htmlFor="tg-dd" error={errs.dariDatang}>
+        <input id="tg-dd" className="tks-input" style={inputStyle} value={f.dariDatang} onChange={(e) => set("dariDatang", e.target.value)} placeholder="Kota atau bandara asal" />
+      </Field>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="card-grid">
         <Field label="Tanggal Kedatangan" htmlFor="tg-td" error={errs.tglDatang}>
           <input id="tg-td" type="date" className="tks-input" style={dateColor} value={f.tglDatang} onChange={(e) => set("tglDatang", e.target.value)} />
@@ -289,14 +276,9 @@ function TravelForm({ user, regs, groups, existing, onClose, onSaved }: { user: 
       </div>
 
       {sectionTitle("KEPULANGAN DARI JAKARTA")}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="card-grid">
-        <Field label="Dari Lokasi" htmlFor="tg-lb" error={errs.lokasiBerangkat}>
-          <input id="tg-lb" list="lokasi-jkt" className="tks-input" style={inputStyle} value={f.lokasiBerangkat} onChange={(e) => set("lokasiBerangkat", e.target.value)} placeholder="Bandara, stasiun, terminal…" />
-        </Field>
-        <Field label="Ke Lokasi" htmlFor="tg-kb" error={errs.keBerangkat}>
-          <input id="tg-kb" className="tks-input" style={inputStyle} value={f.keBerangkat} onChange={(e) => set("keBerangkat", e.target.value)} placeholder="Kota tujuan pulang" />
-        </Field>
-      </div>
+      <Field label="Ke Lokasi" htmlFor="tg-kb" error={errs.keBerangkat}>
+        <input id="tg-kb" className="tks-input" style={inputStyle} value={f.keBerangkat} onChange={(e) => set("keBerangkat", e.target.value)} placeholder="Kota tujuan pulang" />
+      </Field>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="card-grid">
         <Field label="Tanggal Keberangkatan" htmlFor="tg-tb" error={errs.tglBerangkat}>
           <input id="tg-tb" type="date" min={f.tglDatang || undefined} className="tks-input" style={dateColor} value={f.tglBerangkat} onChange={(e) => set("tglBerangkat", e.target.value)} />
@@ -354,12 +336,10 @@ export function TravelTab({ user, regs, groups, refresh }: { user: User; regs: R
                   <div style={{ borderLeft: `3px solid ${O}`, paddingLeft: 14, display: "grid", gap: 8 }}>
                     <div style={{ fontFamily: BC, fontWeight: 800, fontSize: 12, letterSpacing: 3, color: O }}>KEDATANGAN</div>
                     {cell("DARI", g.dariDatang || "-")}
-                    {cell("KE", g.lokasiDatang)}
                     {cell("TANGGAL & JAM", `${fmtDate(g.tglDatang)} · ${g.jamDatang}`)}
                   </div>
                   <div style={{ borderLeft: "3px solid #888", paddingLeft: 14, display: "grid", gap: 8 }}>
                     <div style={{ fontFamily: BC, fontWeight: 800, fontSize: 12, letterSpacing: 3, color: "#bbb" }}>KEPULANGAN</div>
-                    {cell("DARI", g.lokasiBerangkat)}
                     {cell("KE", g.keBerangkat || "-")}
                     {cell("TANGGAL & JAM", `${fmtDate(g.tglBerangkat)} · ${g.jamBerangkat}`)}
                   </div>

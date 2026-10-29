@@ -325,14 +325,24 @@ export const LOMBA = [
   "Tenis Meja",
   "Bulu Tangkis",
   "Catur",
-  "Pelatihan Kekaryaan",
-  "Seminar",
+  "Kekaryaan",
+  "Gapple",
 ] as const
+export const PADUAN_SUARA = "Paduan Suara"
+
+export function lombaRuleError(lomba: string[]) {
+  const picked = [...new Set(lomba)]
+  if (picked.length > 2) return "Peserta hanya dapat mengikuti maksimal 2 lomba."
+  const selain = picked.filter((item) => item !== PADUAN_SUARA)
+  if (selain.length > 1) return "Selain Paduan Suara, peserta hanya boleh memilih satu lomba lain."
+  return ""
+}
 export const FEE = 2_000_000
 export const rupiah = (n: number) => `Rp ${n.toLocaleString("id-ID")}`
 const GENDERS = ["Laki-laki", "Perempuan"] as const
 
 export type FileInfo = { name: string; type: string; size: number; data: string }
+export type PesertaFeedback = { id: string; pesan: string; by?: string; at: string }
 export type Medical = {
   golongan: string
   alergi: string
@@ -393,6 +403,10 @@ export type Registration = {
   mupel: string
   foto: string
   fotoPath?: string
+  ktp: string
+  ktpPath?: string
+  ktpName?: string
+  ktpMime?: string
   wa: string
   ukuran: string
   lomba: string[]
@@ -412,6 +426,7 @@ export type Registration = {
     at?: string
   }
   adminNote?: string
+  feedback?: PesertaFeedback[]
   verifiedBy?: string
   verifiedAt?: string
   status: string
@@ -460,6 +475,28 @@ export function StatusChip({ s }: { s?: string }) {
   return <Chip tone={statusTone(v)}>{v.toUpperCase()}</Chip>
 }
 
+export function FeedbackNotes({ items, hint = true }: { items?: PesertaFeedback[]; hint?: boolean }) {
+  if (!items?.length) return null
+  return (
+    <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+      {items.map((item) => (
+        <div key={item.id} style={{ background: "rgba(255,183,77,0.1)", border: "1px solid #8d6e00", padding: "10px 12px" }}>
+          <div style={{ fontFamily: BC, fontWeight: 700, fontSize: 11, letterSpacing: 2, color: "#ffb74d", marginBottom: 4 }}>FEEDBACK PANITIA</div>
+          <div style={{ fontFamily: BB, fontSize: 14, color: "#fff", whiteSpace: "pre-wrap", lineHeight: 1.55 }}>{item.pesan}</div>
+          <div style={{ fontFamily: BB, fontSize: 12, color: "#ccc", marginTop: 6 }}>
+            {[item.by, item.at ? new Date(item.at).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" }) : ""].filter(Boolean).join(" · ")}
+          </div>
+        </div>
+      ))}
+      {hint && (
+        <div style={{ fontFamily: BB, fontSize: 13, color: "#ffcc80", lineHeight: 1.5 }}>
+          Perbarui data yang disebutkan, lalu simpan. Panitia dapat mengirim feedback lagi sampai peserta disetujui.
+        </div>
+      )}
+    </div>
+  )
+}
+
 export type Hotel = { id: string; name: string; address: string }
 export type Room = { id: string; hotelId: string; name: string; type: string; capacity: number }
 export type Trans = { id: string; kind: string; name: string; route: string; depart: string; capacity: number }
@@ -495,9 +532,10 @@ export function detachReg(regId: string) {
 
 const PESERTA_SELECT = `
   id, nomor_registrasi, kontingen_id, nama, jenis, tempat_lahir, tanggal_lahir, jenis_kelamin,
-  gereja, mupel, whatsapp, ukuran_kaos, foto_path, status, catatan_admin, diverifikasi_pada, created_at,
+  gereja, mupel, whatsapp, ukuran_kaos, foto_path, ktp_path, ktp_nama, ktp_mime, status, catatan_admin, diverifikasi_pada, created_at,
   verifikator:diverifikasi_oleh ( nama ),
   peserta_lomba ( lomba, status, catatan_admin, diverifikasi_pada, verifikator:diverifikasi_oleh ( nama ) ),
+  peserta_feedback ( id, pesan, created_at, penulis:dibuat_oleh ( nama ) ),
   riwayat_medis (
     golongan_darah, alergi, penyakit_lain, obat, riwayat_rawat, kondisi_khusus,
     kontak_nama, kontak_hubungan, kontak_telp, updated_at,
@@ -565,8 +603,9 @@ function verifierName(value: unknown) {
   return one(value as Nested<{ nama?: string }>)?.nama || undefined
 }
 
-function mapPeserta(row: Record<string, unknown>, fotoUrl: string): Registration {
+function mapPeserta(row: Record<string, unknown>, fotoUrl: string, ktpUrl: string): Registration {
   const lombaRows = (row.peserta_lomba as { lomba: string; status: string; catatan_admin: string | null; diverifikasi_pada?: string | null; verifikator?: unknown }[] | null) ?? []
+  const feedbackRows = (row.peserta_feedback as { id: string; pesan: string; created_at: string; penulis?: unknown }[] | null) ?? []
   const medis = one(row.riwayat_medis as Nested<Record<string, unknown>>)
   const penyakit = ((medis?.riwayat_medis_penyakit as { penyakit: string }[] | undefined) ?? []).map((item) => item.penyakit)
   const tempat = one(row.penempatan as Nested<Record<string, unknown>>)
@@ -596,6 +635,10 @@ function mapPeserta(row: Record<string, unknown>, fotoUrl: string): Registration
     mupel: String(row.mupel),
     foto: fotoUrl,
     fotoPath: (row.foto_path as string | null) ?? undefined,
+    ktp: ktpUrl,
+    ktpPath: (row.ktp_path as string | null) ?? undefined,
+    ktpName: (row.ktp_nama as string | null) ?? undefined,
+    ktpMime: (row.ktp_mime as string | null) ?? undefined,
     wa: String(row.whatsapp),
     ukuran: String(row.ukuran_kaos),
     lomba: lombaRows.map((item) => item.lomba),
@@ -631,6 +674,14 @@ function mapPeserta(row: Record<string, unknown>, fotoUrl: string): Registration
         }
       : undefined,
     adminNote: (row.catatan_admin as string | null) ?? undefined,
+    feedback: feedbackRows
+      .map((item) => ({
+        id: item.id,
+        pesan: item.pesan,
+        by: verifierName(item.penulis),
+        at: item.created_at,
+      }))
+      .sort((a, b) => b.at.localeCompare(a.at)),
     verifiedBy: verifierName(row.verifikator),
     verifiedAt: (row.diverifikasi_pada as string | null) ?? undefined,
     status: String(row.status),
@@ -644,8 +695,13 @@ async function fetchPeserta(kontingenId?: string): Promise<Registration[]> {
   const { data, error } = await query
   throwIf(error)
   const rows = (data ?? []) as unknown as Record<string, unknown>[]
-  const photos = await signedUrlMap("foto-peserta", rows.map((row) => String(row.foto_path ?? "")))
-  return rows.map((row) => mapPeserta(row, photos.get(String(row.foto_path ?? "")) ?? ""))
+  const paths = rows.map((row) => String(row.foto_path ?? ""))
+  const ktpPaths = rows.map((row) => String(row.ktp_path ?? ""))
+  const [photos, ktps] = await Promise.all([
+    signedUrlMap("foto-peserta", paths),
+    signedUrlMap("ktp-peserta", ktpPaths),
+  ])
+  return rows.map((row) => mapPeserta(row, photos.get(String(row.foto_path ?? "")) ?? "", ktps.get(String(row.ktp_path ?? "")) ?? ""))
 }
 
 export async function listRegs(email: string): Promise<Registration[]> {
@@ -675,8 +731,27 @@ async function syncLomba(pesertaId: string, lomba: string[]) {
   }
 }
 
+async function putKtp(ownerId: string, pesertaId: string, reg: Registration) {
+  if (!reg.ktp?.startsWith("data:")) {
+    return {
+      ktp_path: reg.ktpPath ?? null,
+      ktp_nama: reg.ktpName ?? null,
+      ktp_mime: reg.ktpMime ?? null,
+    }
+  }
+  const mime = reg.ktpMime || (reg.ktp.startsWith("data:application/pdf") ? "application/pdf" : "image/jpeg")
+  const ext = mime === "application/pdf" ? "pdf" : "jpg"
+  const path = `${ownerId}/${pesertaId}-ktp.${ext}`
+  await uploadDataUrl("ktp-peserta", path, reg.ktp, mime)
+  if (reg.ktpPath && reg.ktpPath !== path) await supabase.storage.from("ktp-peserta").remove([reg.ktpPath])
+  return { ktp_path: path, ktp_nama: reg.ktpName || `KTP.${ext}`, ktp_mime: mime }
+}
+
 export async function savePeserta(reg: Registration) {
   const user = await requireUser()
+  const rule = lombaRuleError(reg.lomba)
+  if (rule) throw new Error(rule)
+  if (!reg.ktp && !reg.ktpPath) throw new Error("Unggah KTP atau identitas diri.")
   const { data: profil, error: profilError } = await supabase.from("profil").select("peran, mupel").eq("id", user.id).single()
   throwIf(profilError)
   const mupel = profil?.peran === "user" ? String(profil.mupel ?? "") : reg.mupel
@@ -701,9 +776,10 @@ export async function savePeserta(reg: Registration) {
       fotoPath = `${user.id}/${pesertaId}.jpg`
       await uploadDataUrl("foto-peserta", fotoPath, reg.foto, "image/jpeg")
     }
+    const ktp = await putKtp(user.id, pesertaId, reg)
     const { data, error } = await supabase
       .from("peserta")
-      .update({ ...row, foto_path: fotoPath })
+      .update({ ...row, foto_path: fotoPath, ...ktp })
       .eq("id", pesertaId)
       .eq("kontingen_id", user.id)
       .select("id")
@@ -716,18 +792,22 @@ export async function savePeserta(reg: Registration) {
 
   const { data, error } = await supabase
     .from("peserta")
-    .insert({ ...row, kontingen_id: user.id, foto_path: null })
+    .insert({ ...row, kontingen_id: user.id, foto_path: null, ktp_path: null })
     .select("id")
     .single()
   throwIf(error)
   if (!data) throw new Error("Peserta gagal disimpan.")
   pesertaId = data.id
 
+  const patch: { foto_path?: string; ktp_path?: string; ktp_nama?: string | null; ktp_mime?: string | null } = {}
   if (reg.foto.startsWith("data:")) {
-    const fotoPath = `${user.id}/${pesertaId}.jpg`
-    await uploadDataUrl("foto-peserta", fotoPath, reg.foto, "image/jpeg")
-    const { error: fotoError } = await supabase.from("peserta").update({ foto_path: fotoPath }).eq("id", pesertaId)
-    throwIf(fotoError)
+    patch.foto_path = `${user.id}/${pesertaId}.jpg`
+    await uploadDataUrl("foto-peserta", patch.foto_path, reg.foto, "image/jpeg")
+  }
+  Object.assign(patch, await putKtp(user.id, pesertaId, reg))
+  if (patch.foto_path || patch.ktp_path) {
+    const { error: fileError } = await supabase.from("peserta").update(patch).eq("id", pesertaId)
+    throwIf(fileError)
   }
 
   if (reg.lomba.length) {
@@ -756,6 +836,14 @@ export async function setPesertaStatus(id: string, status: string, note?: string
   if (!data) throw new Error("Status peserta tidak tersimpan. Periksa peran akun.")
 }
 
+export async function addPesertaFeedback(pesertaId: string, pesan: string) {
+  const text = pesan.trim()
+  if (text.length < 3) throw new Error("Feedback minimal 3 karakter.")
+  const { data, error } = await supabase.from("peserta_feedback").insert({ peserta_id: pesertaId, pesan: text }).select("id").maybeSingle()
+  throwIf(error)
+  if (!data) throw new Error("Feedback tidak tersimpan. Jalankan skrip supabase/revisi-peserta.sql di SQL Editor.")
+}
+
 export async function setLombaStatus(pesertaId: string, lomba: string, status: string, note?: string) {
   const { data, error } = await supabase
     .from("peserta_lomba")
@@ -769,6 +857,10 @@ export async function setLombaStatus(pesertaId: string, lomba: string, status: s
 }
 
 export async function addPesertaLomba(pesertaId: string, lomba: string) {
+  const { data, error: readError } = await supabase.from("peserta_lomba").select("lomba").eq("peserta_id", pesertaId)
+  throwIf(readError)
+  const rule = lombaRuleError([...(data ?? []).map((row) => row.lomba as string), lomba])
+  if (rule) throw new Error(rule)
   const { error } = await supabase.from("peserta_lomba").insert({ peserta_id: pesertaId, lomba })
   throwIf(error)
 }
@@ -935,7 +1027,7 @@ export async function listTrips(): Promise<Trip[]> {
       jenis: "Kedatangan",
       leg: "datang",
       dari: raw.dari_datang ?? "",
-      ke: raw.lokasi_datang,
+      ke: "",
       tanggal: raw.tanggal_datang,
       jam: String(raw.jam_datang ?? "").slice(0, 5),
       organizer,
@@ -950,7 +1042,7 @@ export async function listTrips(): Promise<Trip[]> {
       nama: raw.nama,
       jenis: "Kepulangan",
       leg: "berangkat",
-      dari: raw.lokasi_berangkat,
+      dari: "",
       ke: raw.ke_berangkat ?? "",
       tanggal: raw.tanggal_berangkat,
       jam: String(raw.jam_berangkat ?? "").slice(0, 5),
@@ -1245,6 +1337,17 @@ export async function compressPhoto(file: File, maxDim = 600): Promise<string> {
 }
 
 const MAX_SURAT = 1024 * 1024
+
+export async function readIdentity(file: File): Promise<FileInfo> {
+  if (file.type === "application/pdf") {
+    if (file.size > 2 * 1024 * 1024) throw new Error("Ukuran PDF KTP maksimal 2 MB.")
+    return { name: file.name, type: file.type, size: file.size, data: await readAsDataURL(file) }
+  }
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type)) throw new Error("KTP harus berformat JPG, PNG, WEBP, atau PDF.")
+  if (file.size > 8 * 1024 * 1024) throw new Error("Ukuran gambar maksimal 8 MB.")
+  const data = await compressPhoto(file, 1600)
+  return { name: file.name.replace(/\.\w+$/, ".jpg"), type: "image/jpeg", size: Math.round((data.length * 3) / 4), data }
+}
 
 export async function readProof(file: File, label: string): Promise<FileInfo> {
   if (!/^(application\/pdf|image\/(jpeg|png))$/.test(file.type))
@@ -2009,12 +2112,14 @@ function RegistrationForm({
       : { ...emptyForm(""), mupel: user.mupel },
   )
   const [foto, setFoto] = useState<string>(existing?.foto ?? "")
+  const [ktp, setKtp] = useState<FileInfo | null>(existing?.ktp ? { name: existing.ktpName || "KTP", type: existing.ktpMime || "image/jpeg", size: 0, data: existing.ktp } : null)
   const [lomba, setLomba] = useState<string[]>(existing?.lomba ?? [])
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [formError, setFormError] = useState("")
   const [agree, setAgree] = useState(!!existing)
   const [busy, setBusy] = useState(false)
   const fotoRef = useRef<HTMLInputElement>(null)
+  const ktpRef = useRef<HTMLInputElement>(null)
 
   const set = (k: keyof FormState) => (v: string) => {
     setForm((f) => ({ ...f, [k]: v }))
@@ -2022,6 +2127,29 @@ function RegistrationForm({
   }
   const text = (k: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement>) => set(k)(e.target.value)
   const err = (k: string) => (errors[k] ? { borderColor: "#ff8a65" } : {})
+
+  const pickKtp = async (file?: File) => {
+    if (!file) return
+    try {
+      setKtp(await readIdentity(file))
+      setErrors((e) => ({ ...e, ktp: "" }))
+    } catch (x) {
+      setErrors((e) => ({ ...e, ktp: (x as Error).message }))
+    }
+  }
+
+  const toggleLomba = (name: string, locked: boolean) => {
+    if (locked) return
+    const on = lomba.includes(name)
+    const next = on ? lomba.filter((item) => item !== name) : [...lomba, name]
+    const rule = lombaRuleError(next)
+    if (rule) {
+      setErrors((e) => ({ ...e, lomba: rule }))
+      return
+    }
+    setLomba(next)
+    setErrors((e) => ({ ...e, lomba: "" }))
+  }
 
   const pickFoto = async (file?: File) => {
     if (!file) return
@@ -2046,11 +2174,14 @@ function RegistrationForm({
     else if (new Date(form.tanggal) > new Date()) e.tanggal = "Tanggal lahir tidak valid."
     if (!form.gender) e.gender = "Pilih jenis kelamin."
     if (!foto) e.foto = "Foto wajib diunggah."
+    if (!ktp) e.ktp = "Unggah KTP atau identitas diri."
     if (!form.gereja.trim()) e.gereja = "Asal gereja wajib diisi."
     if (!isMupel(user.mupel)) e.mupel = "Isi asal mupel pada profil akun kontingen."
     if (!/^(\+?62|0)8\d{7,12}$/.test(form.wa.replace(/[\s-]/g, "")))
       e.wa = "Masukkan nomor WhatsApp yang valid, contoh 081234567890."
     if (!form.ukuran) e.ukuran = "Pilih ukuran kaos."
+    const rule = lombaRuleError(lomba)
+    if (rule) e.lomba = rule
     if (!agree) e.agree = "Anda harus menyatakan data sudah benar."
     setErrors(e)
     if (Object.keys(e).length) {
@@ -2080,6 +2211,10 @@ function RegistrationForm({
       mupel: user.mupel,
       foto,
       fotoPath: existing?.fotoPath,
+      ktp: ktp?.data ?? "",
+      ktpPath: existing?.ktpPath,
+      ktpName: ktp?.name,
+      ktpMime: ktp?.type,
       wa: form.wa.replace(/[\s-]/g, ""),
       ukuran: form.ukuran,
       lomba,
@@ -2123,6 +2258,7 @@ function RegistrationForm({
 
       <form onSubmit={submit} noValidate style={{ background: "#2d2d2d", border: "1px solid #4a4a4a", padding: "36px clamp(20px,4vw,40px)" }}>
         {formError && <Banner tone="error">{formError}</Banner>}
+        {!!existing?.feedback?.length && <FeedbackNotes items={existing.feedback} />}
 
         <Field label="1. Nama Peserta" htmlFor="r-nama" error={errors.nama}>
           <input id="r-nama" className="tks-input" style={{ ...inputStyle, ...err("nama") }} value={form.nama} onChange={text("nama")} placeholder="Nama lengkap beserta gelar" autoComplete="name" />
@@ -2159,23 +2295,39 @@ function RegistrationForm({
           </button>
         </Field>
 
-        <Field label="6. Asal Gereja" htmlFor="r-gereja" error={errors.gereja}>
+        <Field label="6. KTP / Identitas Diri" error={errors.ktp} hint="JPG, PNG, WEBP, atau PDF. Pastikan nama dan foto pada identitas terbaca.">
+          <input ref={ktpRef} type="file" accept="image/jpeg,image/png,image/webp,application/pdf" hidden onChange={(e) => { void pickKtp(e.target.files?.[0]); e.target.value = "" }} />
+          <button type="button" className="tks-input" onClick={() => ktpRef.current?.click()} style={{ ...drop, ...err("ktp") }} aria-label="Unggah KTP">
+            {ktp && ktp.type !== "application/pdf" ? (
+              <img src={ktp.data} alt="Pratinjau KTP" style={{ width: 120, height: 76, objectFit: "cover", border: `1px solid ${O}` }} />
+            ) : (
+              <span style={{ width: 72, height: 92, border: "1px dashed #666", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontFamily: BC, fontWeight: 800, fontSize: 12, background: ktp ? O : "transparent" }}>
+                {ktp ? "PDF" : "+"}
+              </span>
+            )}
+            <span style={{ fontFamily: BB, fontSize: 14, color: "#ccc" }}>
+              {ktp ? ktp.name || "Klik untuk mengganti KTP" : "Klik untuk mengunggah KTP"}
+            </span>
+          </button>
+        </Field>
+
+        <Field label="7. Asal Gereja" htmlFor="r-gereja" error={errors.gereja}>
           <input id="r-gereja" className="tks-input" style={{ ...inputStyle, ...err("gereja") }} value={form.gereja} onChange={text("gereja")} placeholder="Nama jemaat GPIB" />
         </Field>
 
-        <Field label="7. Asal Mupel" htmlFor="r-mupel" error={errors.mupel} hint="Otomatis mengikuti asal mupel akun kontingen.">
+        <Field label="8. Asal Mupel" htmlFor="r-mupel" error={errors.mupel} hint="Otomatis mengikuti asal mupel akun kontingen.">
           <MupelSelect id="r-mupel" value={user.mupel || form.mupel} disabled invalid={!!errors.mupel} />
         </Field>
 
-        <Field label="8. Kontak WhatsApp (Contact Person)" htmlFor="r-wa" error={errors.wa} hint="Nomor WhatsApp aktif yang dapat dihubungi panitia.">
+        <Field label="9. Kontak WhatsApp (Contact Person)" htmlFor="r-wa" error={errors.wa} hint="Nomor WhatsApp aktif yang dapat dihubungi panitia.">
           <input id="r-wa" type="tel" inputMode="tel" className="tks-input" style={{ ...inputStyle, ...err("wa") }} value={form.wa} onChange={text("wa")} placeholder="081234567890" autoComplete="tel" />
         </Field>
 
-        <Field label="9. Ukuran Kaos" error={errors.ukuran}>
+        <Field label="10. Ukuran Kaos" error={errors.ukuran}>
           <Segmented label="Ukuran Kaos" options={SIZES} value={form.ukuran} onChange={set("ukuran")} />
         </Field>
 
-        <Field label="10. Pendaftaran Lomba" hint="Opsional. Pilih satu atau lebih cabang lomba / kegiatan.">
+        <Field label="11. Pendaftaran Lomba" error={errors.lomba} hint="Maksimal 2 lomba. Jika memilih 2, salah satunya wajib Paduan Suara. Satu lomba selain paduan suara tetap boleh.">
           <div role="group" aria-label="Pendaftaran Lomba" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {LOMBA.map((l) => {
               const on = lomba.includes(l)
@@ -2188,7 +2340,7 @@ function RegistrationForm({
                   disabled={lockedLomba}
                   title={verdictText(existing?.lombaStatus?.[l]?.status, existing?.lombaStatus?.[l]?.by, existing?.lombaStatus?.[l]?.at) || undefined}
                   className="tks-seg"
-                  onClick={() => { if (!lockedLomba) setLomba((cur) => (on ? cur.filter((x) => x !== l) : [...cur, l])) }}
+                  onClick={() => toggleLomba(l, lockedLomba)}
                   style={{ fontFamily: BC, fontWeight: 700, fontSize: 14, letterSpacing: 2, padding: "11px 18px", cursor: lockedLomba ? "not-allowed" : "pointer", opacity: lockedLomba ? 0.55 : 1, background: on ? O : "#262626", color: on ? "#fff" : "#ccc", border: `1px solid ${on ? O : "#555"}`, transition: "background .2s, color .2s" }}
                 >
                   {on ? "✓ " : ""}
@@ -2326,9 +2478,8 @@ function ParticipantList({
                 {r.status === ST.no && r.adminNote && (
                   <div style={{ fontFamily: BB, fontSize: 13, color: "#ef9a9a", marginTop: 8 }}>Alasan penolakan: {r.adminNote}</div>
                 )}
-                {isLocked(r.status) && (
-                  <div style={{ fontFamily: BB, fontSize: 13, color: "#ffb74d", marginTop: 8 }}>{LOCK_MSG}</div>
-                )}
+                <FeedbackNotes items={r.feedback} />
+                {!r.ktpPath && <div style={{ fontFamily: BB, fontSize: 13, color: "#ff8a65", marginTop: 8 }}>KTP belum diunggah.</div>}
                 {r.lomba?.length > 0 && (
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
                     {r.lomba.map((l) => {
@@ -2526,7 +2677,6 @@ function PaymentsTab({ user, regs, pays, refresh }: { user: User; regs: Registra
                 {p.status === ST.no && p.adminNote && (
                   <div style={{ fontFamily: BB, fontSize: 13, color: "#ef9a9a", margin: "4px 0" }}>Alasan penolakan: {p.adminNote}</div>
                 )}
-                {isLocked(p.status) && <div style={{ fontFamily: BB, fontSize: 13, color: "#ffb74d", margin: "4px 0" }}>{LOCK_MSG}</div>}
                 <div style={{ fontFamily: BC, fontWeight: 800, fontSize: 28, color: "#fff", letterSpacing: 1 }}>{rupiah(p.amount)}</div>
                 <div style={{ fontFamily: BB, fontSize: 14, color: "#ccc", margin: "4px 0 16px" }}>
                   <FileLink f={p.file} /> <span style={{ color: "#888" }}>({fmtSize(p.file.size)})</span>
@@ -2629,7 +2779,6 @@ function DocsTab({ user, docs, refresh }: { user: User; docs: Doc[]; refresh: ()
                 <div style={{ fontFamily: BC, fontWeight: 700, fontSize: 11, letterSpacing: 2.5, color: O, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>SURAT TUGAS #{i + 1} · {fmtDate(d.createdAt)} <StatusChip s={d.status} /></div>
                 {verdictText(d.status, d.verifiedBy, d.verifiedAt) && <div style={{ fontFamily: BB, fontSize: 13, color: "#ddd" }}>{verdictText(d.status, d.verifiedBy, d.verifiedAt)}</div>}
                 {d.status === ST.no && d.adminNote && <div style={{ fontFamily: BB, fontSize: 13, color: "#ef9a9a" }}>Alasan penolakan: {d.adminNote}</div>}
-                {isLocked(d.status) && <div style={{ fontFamily: BB, fontSize: 13, color: "#ffb74d" }}>{LOCK_MSG}</div>}
                 <FileLink f={d.file} /> <span style={{ fontFamily: BB, fontSize: 13, color: "#888" }}>({fmtSize(d.file.size)})</span>
                 {d.note && <div style={{ fontFamily: BB, fontSize: 14, color: "#ccc", marginTop: 2 }}>{d.note}</div>}
               </div>

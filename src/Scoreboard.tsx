@@ -36,7 +36,8 @@ export type Match = { id: string; lomba: string; babak: string; tanggal: string;
 type Snapshot = { c: Contingent[]; m: Match[]; f: boolean; t: string }
 type Row = Contingent & { poin: number; menang: number; main: number; perLomba: Record<string, number>; rank: number }
 
-const listMatches = () => read<Match[]>(MATCH_KEY, [])
+const canonLomba = (name: string) => (name === "Pelatihan Kekaryaan" ? "Kekaryaan" : name)
+const listMatches = () => read<Match[]>(MATCH_KEY, []).map((m) => ({ ...m, lomba: canonLomba(m.lomba) })).filter((m) => m.lomba !== "Seminar")
 const isFinal = () => read<boolean>(SCORE_FINAL_KEY, false)
 
 export function contingentsFrom(regs: Registration[], users: { email: string; name: string; role?: string; mupel?: string }[]): Contingent[] {

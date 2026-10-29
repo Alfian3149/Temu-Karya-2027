@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import QRCode from "qrcode"
 import logo from "@/imports/LOGO_TKSGPIB27__3_.png"
+import { kartuUrl } from "@/PesertaPublic"
 import {
   read,
   upsert,
@@ -57,7 +58,7 @@ function QR({ value, size }: { value: string; size: string }) {
   const [src, setSrc] = useState("")
   useEffect(() => {
     let live = true
-    QRCode.toDataURL(value, { margin: 0, width: 240, errorCorrectionLevel: "M" }).then((u) => live && setSrc(u))
+    QRCode.toDataURL(value, { margin: 1, width: 280, errorCorrectionLevel: "L" }).then((u) => live && setSrc(u))
     return () => { live = false }
   }, [value])
   return src ? <img src={src} alt={`QR ${value}`} style={{ width: size, height: size, display: "block" }} /> : <div style={{ width: size, height: size }} />
@@ -90,7 +91,7 @@ function IdCard({ c }: { c: CardData }) {
       </div>
 
       <div style={{ marginTop: "auto", display: "flex", alignItems: "center", gap: "2.5mm", padding: "0 3mm 2mm" }}>
-        <QR value={c.regNo} size="15mm" />
+        <QR value={kartuUrl(c.regNo)} size="18mm" />
         <div style={{ fontFamily: BC, fontWeight: 700, fontSize: "3mm", letterSpacing: "0.3mm", color: "#444", lineHeight: 1.2 }}>
           NO. ID
           <div style={{ fontWeight: 800, fontSize: "3.6mm", color: "#111" }}>{c.regNo}</div>

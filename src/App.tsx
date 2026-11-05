@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react"
+import React, { useState, useEffect, useMemo } from "react"
 import { SharedMinutes, SHARE_PREFIX } from "@/Secretary"
 import { PublicScoreboard, SCORE_LIVE, SCORE_SNAP } from "@/Scoreboard"
 import { DocsPortal, DOC_PREFIX, listExternalDocs } from "@/Documents"
@@ -9,232 +9,18 @@ import image2 from "@/imports/image-2.png"
 import { useAuth, LoginPage, RegistrationPage, ProfilePage, isStaff, isMupel, mupelText, ROLE_LABEL, type User } from "@/Account"
 import { AdminPanel } from "@/Admin"
 import { PublicPeserta, KARTU_PREFIX } from "@/PesertaPublic"
+import { SiteProvider, useSite, type NavItem } from "@/siteContent"
+import { DEFAULT_RUNDOWN } from "@/siteDefaults"
 
 // ── Style tokens ───────────────────────────────────────────────────────────────
 const BC = "'Barlow Condensed', sans-serif"
 const BB = "'Barlow', sans-serif"
 const O = "#FF6D00"
-
-// ── Nav data ───────────────────────────────────────────────────────────────────
-type SubItem = { label: string; tab: string }
-type NavItem = { label: string; anchor: string; sub?: SubItem[] }
-
-const NAV_ITEMS: NavItem[] = [
-  { label: "HOME", anchor: "home" },
-  {
-    label: "ABOUT",
-    anchor: "about",
-    sub: [
-      { label: "Background", tab: "background" },
-      { label: "Theme", tab: "theme" },
-      { label: "Welcome", tab: "welcome" },
-    ],
-  },
-  {
-    label: "SCHEDULE",
-    anchor: "schedule",
-    sub: [
-      { label: "Rundown", tab: "rundown" },
-      { label: "Speakers", tab: "speakers" },
-      { label: "Venue", tab: "venue" },
-    ],
-  },
-  {
-    label: "INFORMATION",
-    anchor: "information",
-    sub: [
-      { label: "Accommodation", tab: "accommodation" },
-      { label: "FAQ", tab: "faq" },
-      { label: "Downloads", tab: "downloads" },
-    ],
-  },
-  { label: "REGISTRATION", anchor: "registration" },
-  { label: "GALLERY", anchor: "gallery" },
-  { label: "CONTACT", anchor: "contact" },
-]
-
-// ── Content data ───────────────────────────────────────────────────────────────
-const SPEAKERS = [
-  {
-    name: "Pdt. Nitis Putrasana Harsono, M.Th",
-    role: "Ketua Majelis Sinode GPIB",
-    topic: "Penguatan Spiritualitas Kaum Bapak di Era Modern",
-    initial: "ML",
-  },
-  {
-    name: "Prof. Dr. Ir. Samuel Tobing",
-    role: "Pakar Kepemimpinan Kristen",
-    topic: "Kepemimpinan Berbasis Iman dan Integritas",
-    initial: "ST",
-  },
-  {
-    name: "Pdt. Yeremia Sitohang, M.Th",
-    role: "Fasilitator Workshop",
-    topic: "Pemuridan dalam Keluarga Kristen",
-    initial: "YS",
-  },
-  {
-    name: "Dr. Hendra Wattimena",
-    role: "Pembicara Tamu",
-    topic: "Pelayanan Diakonia Kontemporer",
-    initial: "HW",
-  },
-]
-
-type DaySchedule = {
-  date: string
-  day: string
-  items: { time: string; activity: string }[]
-}
-
-const RUNDOWN: DaySchedule[] = [
-  {
-    date: "14 Juli 2027",
-    day: "Hari 1",
-    items: [
-      { time: "08.00 – 12.00", activity: "Registrasi & Check-in Hotel" },
-      { time: "13.00 – 15.00", activity: "Makan Siang & Orientasi Peserta" },
-      { time: "16.00 – 18.00", activity: "Pembukaan Resmi TKS 2027" },
-      { time: "19.00 – 21.00", activity: "Ibadah Pembukaan & Malam Perkenalan" },
-    ],
-  },
-  {
-    date: "15 Juli 2027",
-    day: "Hari 2",
-    items: [
-      { time: "07.00 – 08.00", activity: "Saat Teduh & Sarapan" },
-      { time: "08.30 – 12.00", activity: "Sesi Pleno I: Penguatan Spiritualitas" },
-      { time: "13.00 – 17.00", activity: "Sesi Pleno II: Kepemimpinan Kristen" },
-      { time: "19.00 – 21.00", activity: "Malam Kebersamaan & Kreasi Seni" },
-    ],
-  },
-  {
-    date: "16 Juli 2027",
-    day: "Hari 3",
-    items: [
-      { time: "07.00 – 08.00", activity: "Saat Teduh & Sarapan" },
-      { time: "08.30 – 12.00", activity: "Workshop: Pelayanan & Diakonia" },
-      { time: "13.00 – 17.00", activity: "Workshop: Pengembangan Diri & Skill" },
-      { time: "19.00 – 21.00", activity: "Perlombaan Antar Klasis" },
-    ],
-  },
-  {
-    date: "17 Juli 2027",
-    day: "Hari 4",
-    items: [
-      { time: "07.00 – 08.00", activity: "Saat Teduh & Sarapan" },
-      { time: "08.30 – 12.00", activity: "Sidang Kerja & Rekomendasi Sinodal" },
-      { time: "13.00 – 15.00", activity: "Kunjungan Wisata Rohani" },
-      { time: "19.00 – 21.00", activity: "Gala Dinner & Penghargaan" },
-    ],
-  },
-  {
-    date: "18 Juli 2027",
-    day: "Hari 5",
-    items: [
-      { time: "07.00 – 08.00", activity: "Saat Teduh & Sarapan" },
-      { time: "09.00 – 11.00", activity: "Pelantikan Pengurus Baru PKB" },
-      { time: "11.00 – 12.00", activity: "Ibadah Penutupan TKS 2027" },
-      { time: "13.00 – 15.00", activity: "Makan Siang & Check-out" },
-    ],
-  },
-]
-
-const FAQ_ITEMS = [
-  {
-    q: "Siapa yang dapat mengikuti TKS 2027?",
-    a: "TKS 2027 terbuka untuk seluruh anggota Pelkat PKB GPIB dari berbagai klasis di seluruh Indonesia. Setiap jemaat dapat mengirimkan delegasi sesuai kuota yang ditetapkan panitia.",
-  },
-  {
-    q: "Apa saja dokumen yang perlu disiapkan untuk registrasi?",
-    a: "Peserta wajib menyiapkan: Surat Rekomendasi dari Majelis Jemaat, KTP/Identitas Diri, bukti transfer biaya pendaftaran, dan pas foto terbaru 3x4. Foto dan KTP diunggah pada formulir peserta. Surat tugas dan bukti transfer diunggah melalui portal pendaftaran.",
-  },
-  {
-    q: "Berapa biaya pendaftaran TKS 2027?",
-    a: "Biaya pendaftaran adalah Rp 2.000.000 per peserta, mencakup akomodasi (4 malam), konsumsi selama acara, seminar kit, dan transportasi antar venue. Biaya belum termasuk transportasi ke dan dari lokasi acara.",
-  },
-  {
-    q: "Di mana lokasi penyelenggaraan TKS 2027?",
-    a: "TKS 2027 diselenggarakan di KotaJ akarta. Venue utama adalah Hotel Millenium, dengan kegiatan lapangan di kawasan wisata sekitar kota.",
-  },
-  {
-    q: "Apakah tersedia beasiswa atau subsidi untuk peserta?",
-    a: "Panitia menyediakan subsidi terbatas bagi jemaat kecil atau yang berada di wilayah terpencil. Pengajuan subsidi dilakukan melalui surat resmi kepada panitia pusat sebelum 1 April 2027.",
-  },
-  {
-    q: "Apa yang perlu dibawa selama acara berlangsung?",
-    a: "Peserta disarankan membawa: Alkitab, buku nyanyian GPIB, pakaian resmi dan kasual, obat-obatan pribadi, dan perlengkapan ibadah. Detail lengkap tersedia di Petunjuk Teknis yang dapat diunduh pada halaman Informasi.",
-  },
-]
-
-const DOWNLOADS = [
-  {
-    title: "Surat Edaran TKS 2027",
-    type: "PDF",
-    size: "1.2 MB",
-    desc: "Surat resmi pemberitahuan penyelenggaraan TKS 2027",
-  },
-  {
-    title: "Petunjuk Teknis (Juknis)",
-    type: "PDF",
-    size: "3.4 MB",
-    desc: "Panduan lengkap teknis pelaksanaan kegiatan",
-  },
-  {
-    title: "Proposal Kegiatan",
-    type: "PDF",
-    size: "5.8 MB",
-    desc: "Proposal resmi TKS 2027 PKB GPIB",
-  },
-  {
-    title: "Formulir Pendaftaran Offline",
-    type: "PDF",
-    size: "0.8 MB",
-    desc: "Formulir cetak untuk jemaat tanpa akses internet",
-  },
-  {
-    title: "Jadwal Lengkap Kegiatan",
-    type: "PDF",
-    size: "1.1 MB",
-    desc: "Rundown acara lengkap selama 5 hari pelaksanaan",
-  },
-]
-
-const ACCOMMODATIONS = [
-  {
-    name: "Hotel Grand Clarion Jakarta",
-    type: "Venue Utama",
-    stars: 5,
-    note: "Hotel penyelenggaraan utama TKS 2027 — akomodasi termasuk dalam paket peserta.",
-  },
-  {
-    name: "Hotel Horison Ultima Jakarta",
-    type: "Akomodasi Alternatif",
-    stars: 4,
-    note: "10 menit dari venue utama. Tarif khusus tersedia bagi peserta TKS 2027.",
-  },
-  {
-    name: "Whiz Prime Hotel Makassar",
-    type: "Akomodasi Ekonomis",
-    stars: 3,
-    note: "Pilihan hemat, 15 menit dari venue. Layanan shuttle disediakan panitia.",
-  },
-]
-
-const GALLERY_ITEMS = [
-  { label: "Ibadah Bersama", bg: "#505050", img: image1 as string },
-  { label: "Seminar", bg: "#484848", img: null },
-  { label: "Workshop", bg: "#525252", img: image2 as string },
-  { label: "Paduan Suara", bg: "#464646", img: null },
-  { label: "Olahraga", bg: "#545454", img: null },
-  { label: "Penutupan", bg: "#505050", img: null },
-]
+const GALLERY_SHOTS: (string | null)[] = [image1 as string, null, image2 as string, null, null, null]
 
 // ── Countdown hook ─────────────────────────────────────────────────────────────
-const TARGET_DATE = new Date("2027-07-14T08:00:00+07:00")
-
-function calcTimeLeft() {
-  const diff = TARGET_DATE.getTime() - Date.now()
+function calcTimeLeft(target: Date) {
+  const diff = target.getTime() - Date.now()
   if (diff <= 0) return { days: 0, hours: 0, minutes: 0, seconds: 0 }
   return {
     days: Math.floor(diff / 86400000),
@@ -244,12 +30,12 @@ function calcTimeLeft() {
   }
 }
 
-function useCountdown() {
-  const [t, setT] = useState(calcTimeLeft)
+function useCountdown(target: Date) {
+  const [t, setT] = useState(() => calcTimeLeft(target))
   useEffect(() => {
-    const id = setInterval(() => setT(calcTimeLeft()), 1000)
+    const id = setInterval(() => setT(calcTimeLeft(target)), 1000)
     return () => clearInterval(id)
-  }, [])
+  }, [target])
   return t
 }
 
@@ -323,6 +109,7 @@ function Navbar({
   onGoHome: () => void
   isHome: boolean
 }) {
+  const site = useSite()
   const [userMenu, setUserMenu] = useState(false)
   const scrollTo = (anchor: string) => {
     if (isHome) {
@@ -358,7 +145,7 @@ function Navbar({
   }
 
   const handleSub = (anchor: string, tab: string) => {
-    const parent = NAV_ITEMS.find((n) => n.anchor === anchor)
+    const parent = site.nav.find((n) => n.anchor === anchor)
     if (parent) onNav(parent.label)
     onSubNav(anchor, tab)
     setOpenDropdown(null)
@@ -416,7 +203,7 @@ function Navbar({
           style={{ display: "flex", gap: 2, alignItems: "center" }}
           className="hidden-mobile"
         >
-          {NAV_ITEMS.map((item) => (
+          {site.nav.map((item) => (
             <div
               key={item.label}
               style={{ position: "relative" }}
@@ -661,7 +448,7 @@ function Navbar({
             padding: "8px 0",
           }}
         >
-          {NAV_ITEMS.map((item) => (
+          {site.nav.map((item) => (
             <div key={item.label}>
               <div
                 style={{
@@ -783,7 +570,14 @@ function Navbar({
 
 // ── Hero ───────────────────────────────────────────────────────────────────────
 function Hero() {
-  const { days, hours, minutes, seconds } = useCountdown()
+  const site = useSite()
+  const hero = site.hero
+  const target = useMemo(() => {
+    const date = new Date(hero?.mulai || "2027-07-14T08:00:00+07:00")
+    return Number.isNaN(date.getTime()) ? new Date("2027-07-14T08:00:00+07:00") : date
+  }, [hero?.mulai])
+  const { days, hours, minutes, seconds } = useCountdown(target)
+  if (!site.show("home") || !hero) return null
 
   return (
     <section
@@ -835,7 +629,7 @@ function Hero() {
                 textTransform: "uppercase",
               }}
             >
-              TKS 2027 PKB GPIB
+              {hero.judul}
             </h1>
             <div
               style={{
@@ -856,11 +650,11 @@ function Hero() {
                 lineHeight: 1.5,
               }}
             >
-              TEMU KARYA SINODAL 2027
+              {hero.baris1}
               <br />
-              PELKAT PKB GPIB
+              {hero.baris2}
             </p>
-            <a
+            {site.show("registration") && <a
               href="#registration"
               className="hero-cta"
               style={{
@@ -888,8 +682,8 @@ function Hero() {
                 a.style.color = O
               }}
             >
-              DAFTAR SEKARANG
-            </a>
+              {hero.tombol}
+            </a>}
           </div>
 
           {/* Grey zone: countdown */}
@@ -913,7 +707,7 @@ function Hero() {
                   marginBottom: 12,
                 }}
               >
-                MENGHITUNG MUNDUR
+                {hero.hitung}
               </div>
               <div className="hero-cd-row" style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
                 {[
@@ -985,6 +779,16 @@ function About({
   tab: string
   setTab: (t: string) => void
 }) {
+  const site = useSite()
+  const subs = site.children("about")
+  const head = site.aboutHead
+  const background = site.background
+  const theme = site.theme
+  const welcome = site.welcome
+  useEffect(() => {
+    if (subs.length && !subs.some((item) => item.tab === tab)) setTab(subs[0].tab)
+  }, [subs, tab, setTab])
+  if (!site.show("about")) return null
   return (
     <section id="about" style={{ background: "#4a4a4a", padding: "100px 24px" }}>
       <div style={{ maxWidth: 1200, margin: "0 auto" }}>
@@ -999,7 +803,7 @@ function About({
               marginBottom: 16,
             }}
           >
-            TENTANG TKS 2027
+            {head.kicker}
           </div>
           <h2
             style={{
@@ -1012,17 +816,20 @@ function About({
               lineHeight: 1.1,
             }}
           >
-            TEMU KARYA <span style={{ color: O }}>SINODAL</span>
+            {head.judul} <span style={{ color: O }}>{head.judulAksen}</span>
           </h2>
         </div>
 
         <Tabs
-          tabs={["BACKGROUND", "THEME", "WELCOME"]}
-          active={tab.toUpperCase()}
-          onChange={(t) => setTab(t.toLowerCase())}
+          tabs={subs.map((item) => item.label.toUpperCase())}
+          active={(subs.find((item) => item.tab === tab)?.label ?? tab).toUpperCase()}
+          onChange={(label) => {
+            const found = subs.find((item) => item.label.toUpperCase() === label)
+            if (found) setTab(found.tab)
+          }}
         />
 
-        {tab === "background" && (
+        {tab === "background" && background && (
           <div
             style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 72, alignItems: "start" }}
             className="section-grid"
@@ -1038,30 +845,15 @@ function About({
                   margin: "0 0 20px",
                 }}
               >
-                LATAR BELAKANG TKS 2027
+                {background.heading}
               </h3>
-              <p style={{ fontFamily: BB, color: "#999", lineHeight: 1.8, marginBottom: 20 }}>
-                Temu Karya Sinodal (TKS) merupakan forum pertemuan resmi Pelkat
-                PKB GPIB yang diselenggarakan secara periodik untuk membahas
-                hasil pelayanan, berbagi pengalaman, dan merumuskan arah
-                pelayanan ke depan bagi seluruh kaum bapak di lingkungan GPIB.
-              </p>
-              <p style={{ fontFamily: BB, color: "#999", lineHeight: 1.8, marginBottom: 36 }}>
-                TKS 2027 menjadi momentum penting untuk mempererat tali
-                persaudaraan antar kaum bapak dari seluruh klasis di Indonesia,
-                sekaligus memperkuat spiritualitas, keilmuan, dan keterampilan
-                sebagai wujud iman, doa, rasa syukur, dan kesaksian yang
-                mendalam.
-              </p>
+              {background.paragraf.map((paragraph) => (
+                <p key={paragraph} style={{ fontFamily: BB, color: "#999", lineHeight: 1.8, marginBottom: 20 }}>{paragraph}</p>
+              ))}
               <div
                 style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}
               >
-                {[
-                  { icon: "✝", title: "Iman", desc: "Memperkuat pondasi iman dalam Kristus" },
-                  { icon: "🤝", title: "Persekutuan", desc: "Membangun persatuan antar klasis" },
-                  { icon: "🌱", title: "Pelayanan", desc: "Mengembangkan jiwa melayani" },
-                  { icon: "⚡", title: "Pembaruan", desc: "Transformasi diri dan gereja" },
-                ].map((item) => (
+                {background.pilar.map((item) => (
                   <div
                     key={item.title}
                     style={{
@@ -1140,7 +932,7 @@ function About({
           </div>
         )}
 
-        {tab === "theme" && (
+        {tab === "theme" && theme && (
           <div>
             <div
               style={{
@@ -1161,7 +953,7 @@ function About({
                   marginBottom: 16,
                 }}
               >
-                TEMA TKS 2027
+                {theme.kicker}
               </div>
               <h3
                 style={{
@@ -1174,9 +966,9 @@ function About({
                   lineHeight: 1.2,
                 }}
               >
-                "BERSATU DALAM IMAN,
+                "{theme.baris1}
                 <br />
-                <span style={{ color: O }}>BERKARYA UNTUK BANGSA"</span>
+                <span style={{ color: O }}>{theme.baris2}"</span>
               </h3>
               <div
                 style={{ width: 60, height: 3, background: O, margin: "0 auto 24px" }}
@@ -1190,9 +982,7 @@ function About({
                   lineHeight: 1.8,
                 }}
               >
-                Tema ini mencerminkan semangat persatuan seluruh kaum bapak GPIB
-                dalam satu tekad untuk melayani Tuhan melalui karya nyata bagi
-                bangsa dan masyarakat Indonesia.
+                {theme.deskripsi}
               </p>
             </div>
 
@@ -1212,26 +1002,7 @@ function About({
               style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 20 }}
               className="card-grid"
             >
-              {[
-                {
-                  num: "01",
-                  title: "Spiritualitas",
-                  sub: "Penguatan Iman dan Doa",
-                  desc: "Memperdalam kehidupan rohani dan spiritualitas kaum bapak sebagai fondasi pelayanan yang kuat",
-                },
-                {
-                  num: "02",
-                  title: "Keilmuan",
-                  sub: "Pengembangan Kapasitas",
-                  desc: "Meningkatkan wawasan dan pengetahuan untuk mendukung pelayanan yang lebih efektif dan berdampak",
-                },
-                {
-                  num: "03",
-                  title: "Keterampilan",
-                  sub: "Aksi Nyata Pelayanan",
-                  desc: "Mengembangkan keterampilan praktis untuk pelayanan diakonia dan misi gereja di tengah masyarakat",
-                },
-              ].map((item) => (
+              {theme.subtema.map((item) => (
                 <div
                   key={item.num}
                   style={{
@@ -1292,27 +1063,12 @@ function About({
           </div>
         )}
 
-        {tab === "welcome" && (
+        {tab === "welcome" && welcome && (
           <div
             style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 32, alignItems: "start" }}
             className="section-grid"
           >
-            {[
-              {
-                role: "Ketua Majelis Sinode GPIB",
-                name: "Pdt. Dr. Marthen Leiwakabessy",
-                initial: "ML",
-                message:
-                  "Temu Karya Sinodal 2027 merupakan momentum yang sangat berharga bagi seluruh keluarga besar PKB GPIB. Saya mengajak semua peserta untuk hadir dengan hati yang terbuka, semangat yang membara, dan tekad yang kuat untuk bersama-sama merumuskan langkah pelayanan yang lebih bermakna bagi gereja dan masyarakat Indonesia.",
-              },
-              {
-                role: "Ketua Umum TKS 2027",
-                name: "Once Mekel",
-                initial: "DS",
-                message:
-                  "Dengan penuh syukur dan sukacita, kami menyambut seluruh peserta TKS 2027 dari berbagai penjuru Indonesia. Panitia telah menyiapkan seluruh rangkaian kegiatan dengan sepenuh hati agar setiap peserta dapat mengalami pertumbuhan iman, persekutuan yang hangat, dan kecakapan pelayanan yang semakin terasah.",
-              },
-            ].map((person) => (
+            {welcome.orang.map((person) => (
               <div
                 key={person.initial}
                 style={{
@@ -1403,7 +1159,19 @@ function Schedule({
   tab: string
   setTab: (t: string) => void
 }) {
+  const site = useSite()
+  const subs = site.children("schedule")
+  const head = site.scheduleHead
+  const rundown = site.rundown
+  const speakers = site.speakers
+  const venue = site.venue
   const [activeDay, setActiveDay] = useState(0)
+  const hari = rundown?.hari ?? []
+  const day = hari[Math.min(activeDay, Math.max(hari.length - 1, 0))]
+  useEffect(() => {
+    if (subs.length && !subs.some((item) => item.tab === tab)) setTab(subs[0].tab)
+  }, [subs, tab, setTab])
+  if (!site.show("schedule")) return null
 
   return (
     <section id="schedule" style={{ background: "#3a3a3a", padding: "100px 24px" }}>
@@ -1419,7 +1187,7 @@ function Schedule({
               marginBottom: 16,
             }}
           >
-            JADWAL & KEGIATAN
+            {head.kicker}
           </div>
           <h2
             style={{
@@ -1432,23 +1200,26 @@ function Schedule({
               lineHeight: 1.1,
             }}
           >
-            AGENDA <span style={{ color: O }}>TKS 2027</span>
+            {head.judul} <span style={{ color: O }}>{head.judulAksen}</span>
           </h2>
         </div>
 
         <Tabs
-          tabs={["RUNDOWN", "SPEAKERS", "VENUE"]}
-          active={tab.toUpperCase()}
-          onChange={(t) => setTab(t.toLowerCase())}
+          tabs={subs.map((item) => item.label.toUpperCase())}
+          active={(subs.find((item) => item.tab === tab)?.label ?? tab).toUpperCase()}
+          onChange={(label) => {
+            const found = subs.find((item) => item.label.toUpperCase() === label)
+            if (found) setTab(found.tab)
+          }}
         />
 
-        {tab === "rundown" && (
+        {tab === "rundown" && rundown && (
           <div
             style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 0 }}
             className="program-grid"
           >
             <div style={{ borderRight: "1px solid rgba(255,109,0,0.2)" }}>
-              {RUNDOWN.map((day, i) => (
+              {hari.map((item, i) => (
                 <button
                   key={i}
                   onClick={() => setActiveDay(i)}
@@ -1477,7 +1248,7 @@ function Schedule({
                       marginBottom: 4,
                     }}
                   >
-                    {day.day.toUpperCase()}
+                    {item.day.toUpperCase()}
                   </div>
                   <div
                     style={{
@@ -1488,7 +1259,7 @@ function Schedule({
                       letterSpacing: 1,
                     }}
                   >
-                    {day.date}
+                    {item.date}
                   </div>
                 </button>
               ))}
@@ -1505,10 +1276,10 @@ function Schedule({
                   margin: "0 0 28px",
                 }}
               >
-                {RUNDOWN[activeDay].day.toUpperCase()} — {RUNDOWN[activeDay].date}
+                {day ? `${day.day.toUpperCase()} — ${day.date}` : "Belum ada kegiatan."}
               </h3>
               <div style={{ display: "flex", flexDirection: "column" }}>
-                {RUNDOWN[activeDay].items.map((item, j) => (
+                {(day?.items ?? []).map((item, j) => (
                   <div
                     key={j}
                     style={{
@@ -1558,12 +1329,12 @@ function Schedule({
           </div>
         )}
 
-        {tab === "speakers" && (
+        {tab === "speakers" && speakers && (
           <div
             style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 24 }}
             className="section-grid"
           >
-            {SPEAKERS.map((sp) => (
+            {speakers.pembicara.map((sp) => (
               <div
                 key={sp.initial}
                 style={{
@@ -1629,7 +1400,7 @@ function Schedule({
           </div>
         )}
 
-        {tab === "venue" && (
+        {tab === "venue" && venue && (
           <div>
             <div
               style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 48 }}
@@ -1646,7 +1417,7 @@ function Schedule({
                     margin: "0 0 20px",
                   }}
                 >
-                  VENUE UTAMA
+                  {venue.judulVenue}
                 </h3>
                 <div
                   style={{
@@ -1666,7 +1437,7 @@ function Schedule({
                       marginBottom: 6,
                     }}
                   >
-                    Hotel Grand Clarion Makassar
+                    {venue.nama}
                   </div>
                   <div
                     style={{
@@ -1678,13 +1449,13 @@ function Schedule({
                       marginBottom: 14,
                     }}
                   >
-                    VENUE UTAMA TKS 2027
+                    {venue.peran}
                   </div>
                   <p style={{ fontFamily: BB, color: "#888", fontSize: 14, lineHeight: 1.7, margin: "0 0 16px" }}>
-                    Jl. A. Pettarani No. 3, Makassar, Sulawesi Selatan 90231
+                    {venue.alamat}
                   </p>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {["Ballroom 1500 Orang", "WiFi Gratis", "Shuttle Bus", "Parkir Luas"].map(
+                    {venue.fasilitas.map(
                       (f) => (
                         <div
                           key={f}
@@ -1705,12 +1476,7 @@ function Schedule({
                   </div>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  {[
-                    { label: "Tanggal", value: "14 – 18 Juli 2027" },
-                    { label: "Kota", value: "Makassar, Sulsel" },
-                    { label: "Kapasitas", value: "1.500 Peserta" },
-                    { label: "Klasis", value: "Seluruh Indonesia" },
-                  ].map((item) => (
+                  {venue.fakta.map((item) => (
                     <div
                       key={item.label}
                       style={{
@@ -1757,25 +1523,9 @@ function Schedule({
                     margin: "0 0 20px",
                   }}
                 >
-                  RUTE & TRANSPORTASI
+                  {venue.judulRute}
                 </h3>
-                {[
-                  {
-                    icon: "✈",
-                    title: "Dari Bandara",
-                    desc: "Bandara Sultan Hasanuddin — 45 menit dengan taksi/GoCar. Shuttle bus panitia tersedia pukul 08.00–14.00.",
-                  },
-                  {
-                    icon: "🚢",
-                    title: "Dari Pelabuhan",
-                    desc: "Pelabuhan Soekarno-Hatta Makassar — 20 menit ke venue utama. Transportasi online tersedia 24 jam.",
-                  },
-                  {
-                    icon: "🚌",
-                    title: "Shuttle Panitia",
-                    desc: "Shuttle gratis dari hotel rekanan ke venue utama, setiap 30 menit mulai pukul 06.30 WIT.",
-                  },
-                ].map((route) => (
+                {venue.rute.map((route) => (
                   <div
                     key={route.icon}
                     style={{
@@ -1824,7 +1574,17 @@ function Information({
   tab: string
   setTab: (t: string) => void
 }) {
+  const site = useSite()
+  const subs = site.children("information")
+  const head = site.infoHead
+  const stay = site.accommodation
+  const faq = site.faq
+  const downloads = site.downloads
   const [openFaq, setOpenFaq] = useState<number | null>(null)
+  useEffect(() => {
+    if (subs.length && !subs.some((item) => item.tab === tab)) setTab(subs[0].tab)
+  }, [subs, tab, setTab])
+  if (!site.show("information")) return null
 
   return (
     <section id="information" style={{ background: "#4a4a4a", padding: "100px 24px" }}>
@@ -1840,7 +1600,7 @@ function Information({
               marginBottom: 16,
             }}
           >
-            INFORMASI PESERTA
+            {head.kicker}
           </div>
           <h2
             style={{
@@ -1853,23 +1613,26 @@ function Information({
               lineHeight: 1.1,
             }}
           >
-            PANDUAN <span style={{ color: O }}>PESERTA</span>
+            {head.judul} <span style={{ color: O }}>{head.judulAksen}</span>
           </h2>
         </div>
 
         <Tabs
-          tabs={["ACCOMMODATION", "FAQ", "DOWNLOADS"]}
-          active={tab.toUpperCase()}
-          onChange={(t) => setTab(t.toLowerCase())}
+          tabs={subs.map((item) => item.label.toUpperCase())}
+          active={(subs.find((item) => item.tab === tab)?.label ?? tab).toUpperCase()}
+          onChange={(label) => {
+            const found = subs.find((item) => item.label.toUpperCase() === label)
+            if (found) setTab(found.tab)
+          }}
         />
 
-        {tab === "accommodation" && (
+        {tab === "accommodation" && stay && (
           <div>
             <div
               style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 24, marginBottom: 40 }}
               className="card-grid"
             >
-              {ACCOMMODATIONS.map((acc) => (
+              {stay.hotel.map((acc) => (
                 <div
                   key={acc.name}
                   style={{
@@ -1941,17 +1704,13 @@ function Information({
                   marginBottom: 20,
                 }}
               >
-                TRANSPORTASI LOKAL
+                {stay.transportJudul}
               </div>
               <div
                 style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}
                 className="card-grid"
               >
-                {[
-                  { title: "Shuttle Resmi", desc: "Layanan shuttle antar hotel rekanan ke venue, berangkat setiap 30 menit" },
-                  { title: "Transportasi Online", desc: "Gojek dan Grab tersedia 24 jam di seluruh kota Jakarta" },
-                  { title: "Taksi Resmi", desc: "Taksi ber-argometer tersedia di bandara, pelabuhan, dan hotel utama" },
-                ].map((t) => (
+                {stay.transport.map((t) => (
                   <div
                     key={t.title}
                     style={{ padding: 20, background: "#444", border: "1px solid rgba(255,255,255,0.04)" }}
@@ -1978,9 +1737,9 @@ function Information({
           </div>
         )}
 
-        {tab === "faq" && (
+        {tab === "faq" && faq && (
           <div style={{ maxWidth: 800 }}>
-            {FAQ_ITEMS.map((item, i) => (
+            {faq.items.map((item, i) => (
               <div
                 key={i}
                 style={{ borderBottom: "1px solid rgba(255,109,0,0.1)", overflow: "hidden" }}
@@ -2038,7 +1797,7 @@ function Information({
           </div>
         )}
 
-        {tab === "downloads" && (
+        {tab === "downloads" && downloads && (
           <div>
             <div
               style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}
@@ -2053,7 +1812,7 @@ function Information({
                     href: d.file.data,
                     name: d.file.name,
                   }))
-                : DOWNLOADS.map((d) => ({ ...d, href: "", name: "" }))
+                : downloads.berkas.map((d) => ({ ...d, href: "", name: "" }))
               ).map((dl) => (
                 <div
                   key={dl.title}
@@ -2145,8 +1904,7 @@ function Information({
               ))}
             </div>
             <p style={{ fontFamily: BB, fontSize: 13, color: "#555", marginTop: 24, lineHeight: 1.7 }}>
-              * Berkas unduhan tersedia setelah registrasi dikonfirmasi. Hubungi sekretariat panitia
-              untuk informasi lebih lanjut.
+              {downloads.catatan}
             </p>
           </div>
         )}
@@ -2163,6 +1921,9 @@ function Registration({
   user: User | null
   onRegister: () => void
 }) {
+  const site = useSite()
+  const copy = site.registration
+  if (!site.show("registration") || !copy) return null
   return (
     <section id="registration" style={{ background: O, padding: "100px 24px" }}>
       <div style={{ maxWidth: 1200, margin: "0 auto" }}>
@@ -2181,7 +1942,7 @@ function Registration({
                 marginBottom: 16,
               }}
             >
-              REGISTRASI / REGISTRATION
+              {copy.kicker}
             </div>
             <h2
               style={{
@@ -2194,21 +1955,15 @@ function Registration({
                 lineHeight: 1.0,
               }}
             >
-              DAFTAR
+              {copy.judulBaris1}
               <br />
-              SEKARANG
+              {copy.judulBaris2}
             </h2>
             <p style={{ fontFamily: BB, color: "rgba(255,255,255,0.75)", lineHeight: 1.8, marginBottom: 32, fontSize: 16 }}>
-              Jadilah bagian dari Temu Karya Sinodal 2027. Pendaftaran dibuka
-              hingga 30 Juni 2027. Jangan lewatkan kesempatan bersejarah ini
-              bersama ribuan kaum bapak GPIB dari seluruh Indonesia.
+              {copy.paragraf}
             </p>
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 40 }}>
-              {[
-                { label: "Batas Daftar", value: "30 Juni 2027" },
-                { label: "Kuota", value: "1.500 Peserta" },
-                { label: "Biaya", value: "Rp 2.000.000" },
-              ].map((item) => (
+              {copy.statistik.map((item) => (
                 <div key={item.label} style={{ background: "rgba(0,0,0,0.15)", padding: "16px 24px" }}>
                   <div
                     style={{
@@ -2269,21 +2024,15 @@ function Registration({
                   marginBottom: 28,
                 }}
               >
-                LANGKAH PENDAFTARAN
+                {copy.langkahJudul}
               </div>
-              {[
-                { step: "01", title: "Buat Akun & Login", desc: "Daftar akun baru atau masuk dengan akun yang sudah ada" },
-                { step: "02", title: "Isi Formulir Online", desc: "Lengkapi data peserta, unggah foto, KTP, dan surat tugas" },
-                { step: "03", title: "Kirim Pendaftaran", desc: "Dapatkan nomor pendaftaran dan pantau status verifikasi" },
-                { step: "04", title: "Konfirmasi Pembayaran", desc: "Transfer biaya dan kirim bukti ke sekretariat" },
-                { step: "05", title: "Terima ID Peserta", desc: "Panitia mengirimkan nomor ID dan informasi acara" },
-              ].map((s, i) => (
+              {copy.langkah.map((s, i) => (
                 <div
                   key={s.step}
                   style={{
                     display: "flex",
                     gap: 20,
-                    marginBottom: i < 4 ? 20 : 0,
+                    marginBottom: i < copy.langkah.length - 1 ? 20 : 0,
                     alignItems: "flex-start",
                   }}
                 >
@@ -2335,6 +2084,10 @@ function Registration({
 
 // ── Gallery ────────────────────────────────────────────────────────────────────
 function Gallery() {
+  const site = useSite()
+  const copy = site.gallery
+  if (!site.show("gallery") || !copy) return null
+  const shots = copy.item.map((item, index) => ({ ...item, img: GALLERY_SHOTS[index] ?? null }))
   return (
     <section id="gallery" style={{ background: "#4a4a4a", padding: "100px 24px" }}>
       <div style={{ maxWidth: 1200, margin: "0 auto" }}>
@@ -2349,7 +2102,7 @@ function Gallery() {
               marginBottom: 16,
             }}
           >
-            DOKUMENTASI
+            {copy.kicker}
           </div>
           <h2
             style={{
@@ -2361,7 +2114,7 @@ function Gallery() {
               margin: 0,
             }}
           >
-            GALERI <span style={{ color: O }}>KEGIATAN</span>
+            {copy.judul} <span style={{ color: O }}>{copy.judulAksen}</span>
           </h2>
         </div>
 
@@ -2369,7 +2122,7 @@ function Gallery() {
           style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 3 }}
           className="gallery-grid"
         >
-          {GALLERY_ITEMS.map((item, i) => (
+          {shots.map((item, i) => (
             <div
               key={i}
               style={{
@@ -2454,8 +2207,7 @@ function Gallery() {
             marginTop: 32,
           }}
         >
-          Foto & video dokumentasi pra-acara akan diperbarui secara berkala. Kilas balik TKS
-          sebelumnya tersedia di media sosial resmi panitia.
+          {copy.catatan}
         </p>
       </div>
     </section>
@@ -2464,8 +2216,11 @@ function Gallery() {
 
 // ── Contact ────────────────────────────────────────────────────────────────────
 function Contact() {
+  const site = useSite()
+  const copy = site.contact
   const [form, setForm] = useState({ name: "", email: "", message: "" })
   const [sent, setSent] = useState(false)
+  if (!site.show("contact") || !copy) return null
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -2491,7 +2246,7 @@ function Contact() {
                 marginBottom: 16,
               }}
             >
-              HUBUNGI KAMI
+              {copy.kicker}
             </div>
             <h2
               style={{
@@ -2504,20 +2259,13 @@ function Contact() {
                 lineHeight: 1.1,
               }}
             >
-              ADA <span style={{ color: O }}>PERTANYAAN?</span>
+              {copy.judul} <span style={{ color: O }}>{copy.judulAksen}</span>
             </h2>
             <p style={{ fontFamily: BB, color: "#888", lineHeight: 1.8, marginBottom: 32 }}>
-              Kami siap menjawab setiap pertanyaan Anda tentang Temu Karya
-              Sinodal 2027. Jangan ragu menghubungi kami melalui saluran
-              resmi berikut.
+              {copy.paragraf}
             </p>
 
-            {[
-              { label: "Email", value: "tkspkbgpib2027@gmail.com" },
-              { label: "WhatsApp Sekretariat", value: "+62 812-0000-2027" },
-              { label: "WhatsApp Ketua Panitia", value: "+62 811-0000-2027" },
-              { label: "Instagram", value: "@tkspkbgpib2027" },
-            ].map((c) => (
+            {copy.saluran.map((c) => (
               <div
                 key={c.label}
                 style={{
@@ -2564,10 +2312,10 @@ function Contact() {
                   marginBottom: 14,
                 }}
               >
-                MEDIA SOSIAL RESMI
+                {copy.sosialJudul}
               </div>
               <div style={{ display: "flex", gap: 10 }}>
-                {["Instagram", "Facebook", "YouTube"].map((s) => (
+                {copy.sosial.map((s) => (
                   <a
                     key={s}
                     href="#contact"
@@ -2749,6 +2497,7 @@ function Contact() {
 
 // ── Footer ─────────────────────────────────────────────────────────────────────
 function Footer() {
+  const site = useSite()
   return (
     <footer
       style={{
@@ -2795,7 +2544,7 @@ function Footer() {
           </div>
 
           <div style={{ display: "flex", gap: 20, flexWrap: "wrap", justifyContent: "center" }}>
-            {NAV_ITEMS.map((item) => (
+            {site.nav.map((item) => (
               <a
                 key={item.label}
                 href={`#${item.anchor}`}
@@ -2821,9 +2570,9 @@ function Footer() {
           </div>
 
           <div style={{ textAlign: "right", fontFamily: BB, fontSize: 12, color: "#444" }}>
-            © 2027 Pelkat PKB GPIB.
+            {site.footer.hakCipta}
             <br />
-            All rights reserved.
+            {site.footer.tambahan}
           </div>
         </div>
 
@@ -2837,7 +2586,7 @@ function Footer() {
             color: "#333",
           }}
         >
-          DKI Jakarta· 14 – 18 Juli 2027
+          {site.footer.lokasi}
         </div>
       </div>
     </footer>
@@ -2846,6 +2595,15 @@ function Footer() {
 
 // ── App ────────────────────────────────────────────────────────────────────────
 export default function App() {
+  return (
+    <SiteProvider>
+      <AppRoutes />
+    </SiteProvider>
+  )
+}
+
+function AppRoutes() {
+  const site = useSite()
   const route = () => (location.hash.startsWith(SHARE_PREFIX) ? "minutes" : location.hash.startsWith(DOC_PREFIX) ? "docs" : location.hash === SCORE_LIVE || location.hash.startsWith(SCORE_SNAP) ? "score" : location.hash.startsWith(KARTU_PREFIX) ? "kartu" : "")
   const [shared, setShared] = useState(route)
   useEffect(() => {
@@ -2853,10 +2611,12 @@ export default function App() {
     window.addEventListener("hashchange", f)
     return () => window.removeEventListener("hashchange", f)
   }, [])
-  return shared === "minutes" ? <SharedMinutes /> : shared === "docs" ? <DocsPortal /> : shared === "score" ? <PublicScoreboard key={location.hash.slice(0, 40)} /> : shared === "kartu" ? <PublicPeserta agenda={RUNDOWN} /> : <MainApp />
+  const agenda = (site.rundown ?? DEFAULT_RUNDOWN).hari
+  return shared === "minutes" ? <SharedMinutes /> : shared === "docs" ? <DocsPortal /> : shared === "score" ? <PublicScoreboard key={location.hash.slice(0, 40)} /> : shared === "kartu" ? <PublicPeserta agenda={agenda} /> : <MainApp />
 }
 
 function MainApp() {
+  const site = useSite()
   const [activeNav, setActiveNav] = useState("HOME")
   const [aboutTab, setAboutTab] = useState("background")
   const [scheduleTab, setScheduleTab] = useState("rundown")
@@ -2871,6 +2631,10 @@ function MainApp() {
   useEffect(() => {
     if (view !== "home") window.scrollTo({ top: 0 })
   }, [view])
+
+  useEffect(() => {
+    if (view === "home") site.reload()
+  }, [view, site.reload])
 
   useEffect(() => {
     if (!user && (view === "registration" || view === "admin" || view === "profile")) setView("login")
@@ -2910,12 +2674,12 @@ function MainApp() {
 
   useEffect(() => {
     if (view !== "home") return
-    const anchors = NAV_ITEMS.map((n) => n.anchor)
+    const anchors = site.nav.map((n) => n.anchor)
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
           if (entry.isIntersecting) {
-            const item = NAV_ITEMS.find((n) => n.anchor === entry.target.id)
+            const item = site.nav.find((n) => n.anchor === entry.target.id)
             if (item) setActiveNav(item.label)
           }
         })
@@ -2927,7 +2691,7 @@ function MainApp() {
       if (el) observer.observe(el)
     })
     return () => observer.disconnect()
-  }, [view])
+  }, [view, site.nav])
 
   return (
     <>

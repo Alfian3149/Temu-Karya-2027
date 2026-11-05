@@ -72,6 +72,7 @@ import { BudgetsTab, BudgetRecapTab, budgetStats } from "@/Budget"
 import { MeetingsTab, TasksTab, secretaryStats } from "@/Secretary"
 import { IncomeTab, ExpenseTab, ReportTab, financeTotals, refreshFinanceTotals, type FinanceTotals } from "@/Finance"
 import { CommitteeAdmin, IdCardPreview, ROLE_COLOR, type CardData } from "@/IdCards"
+import { SiteAdmin } from "@/SiteAdmin"
 
 const BC = "'Barlow Condensed', sans-serif"
 const BB = "'Barlow', sans-serif"
@@ -944,6 +945,7 @@ const TABS: TabDef[] = [
   { id: "rekapbgt", short: "ANGGARAN", label: "REKAP ANGGARAN", roles: ["superuser", "panitia_inti", "bendahara"], render: () => <BudgetRecapTab /> },
   { id: "dokumen", short: "DOKUMEN", label: "DOKUMEN PENTING", roles: ALL_STAFF, render: (p) => <DocumentsTab me={p.me} /> },
   { id: "panitia", short: "PANITIA", label: "PANITIA", roles: ["superuser"], render: () => <CommitteeAdmin /> },
+  { id: "situs", short: "SITUS", label: "SITUS PUBLIK", roles: ["superuser"], render: () => <SiteAdmin /> },
   { id: "akun", short: "AKUN", label: "AKUN", roles: ["superuser"], render: (p) => <UsersAdmin {...p} /> },
 ]
 

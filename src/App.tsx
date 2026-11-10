@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react"
+import React, { useState, useEffect, useMemo, useRef } from "react"
 import { SharedMinutes, SHARE_PREFIX } from "@/Secretary"
 import { PublicScoreboard, SCORE_LIVE, SCORE_SNAP } from "@/Scoreboard"
 import { DocsPortal, DOC_PREFIX, listExternalDocs } from "@/Documents"
@@ -10,7 +10,7 @@ import { useAuth, LoginPage, RegistrationPage, ProfilePage, isStaff, isMupel, mu
 import { AdminPanel } from "@/Admin"
 import { PublicPeserta, KARTU_PREFIX } from "@/PesertaPublic"
 import { SiteProvider, useSite, type NavItem } from "@/siteContent"
-import { DEFAULT_RUNDOWN } from "@/siteDefaults"
+import { DEFAULT_RUNDOWN, httpUrl, youtubeId } from "@/siteDefaults"
 
 // ── Style tokens ───────────────────────────────────────────────────────────────
 const BC = "'Barlow Condensed', sans-serif"
@@ -568,16 +568,70 @@ function Navbar({
   )
 }
 
+function TeaserModal({ videoId, title, onClose }: { videoId: string; title: string; onClose: () => void }) {
+  const closeRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    closeRef.current?.focus()
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose()
+    }
+    document.addEventListener("keydown", onKey)
+    const previous = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+    return () => {
+      document.removeEventListener("keydown", onKey)
+      document.body.style.overflow = previous
+    }
+  }, [onClose])
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      onClick={onClose}
+      style={{ position: "fixed", inset: 0, zIndex: 400, background: "rgba(0,0,0,0.82)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}
+    >
+      <div onClick={(event) => event.stopPropagation()} style={{ width: "min(960px, 100%)", background: "#1c1c1c" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, padding: "14px 16px" }}>
+          <div style={{ fontFamily: BC, fontWeight: 800, letterSpacing: 2, color: "#fff" }}>{title}</div>
+          <button
+            ref={closeRef}
+            type="button"
+            onClick={onClose}
+            style={{ fontFamily: BC, fontWeight: 800, letterSpacing: 2, color: "#fff", background: "transparent", border: "1px solid rgba(255,255,255,0.4)", padding: "8px 14px", cursor: "pointer" }}
+          >
+            TUTUP
+          </button>
+        </div>
+        <div style={{ position: "relative", paddingTop: "56.25%", background: "#000" }}>
+          <iframe
+            title={title}
+            src={`https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&rel=0`}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowFullScreen
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: 0 }}
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Hero ───────────────────────────────────────────────────────────────────────
 function Hero() {
   const site = useSite()
   const hero = site.hero
+  const [teaserOpen, setTeaserOpen] = useState(false)
+  const closeTeaser = useMemo(() => () => setTeaserOpen(false), [])
   const target = useMemo(() => {
     const date = new Date(hero?.mulai || "2027-07-14T08:00:00+07:00")
     return Number.isNaN(date.getTime()) ? new Date("2027-07-14T08:00:00+07:00") : date
   }, [hero?.mulai])
   const { days, hours, minutes, seconds } = useCountdown(target)
   if (!site.show("home") || !hero) return null
+  const teaserId = hero.videoAktif ? youtubeId(hero.youtube) : ""
+  const teaserLabel = hero.tombolVideo.trim() || "TONTON TEASER"
 
   return (
     <section
@@ -654,36 +708,73 @@ function Hero() {
               <br />
               {hero.baris2}
             </p>
-            {site.show("registration") && <a
-              href="#registration"
-              className="hero-cta"
-              style={{
-                display: "inline-block",
-                fontFamily: BC,
-                fontWeight: 800,
-                fontSize: 14,
-                letterSpacing: 3,
-                color: O,
-                background: "#fff",
-                padding: "14px 32px",
-                textDecoration: "none",
-                alignSelf: "flex-start",
-                border: "2px solid #fff",
-                transition: "background 0.2s, color 0.2s",
-              }}
-              onMouseEnter={(e) => {
-                const a = e.currentTarget as HTMLAnchorElement
-                a.style.background = "transparent"
-                a.style.color = "#fff"
-              }}
-              onMouseLeave={(e) => {
-                const a = e.currentTarget as HTMLAnchorElement
-                a.style.background = "#fff"
-                a.style.color = O
-              }}
-            >
-              {hero.tombol}
-            </a>}
+            {(site.show("registration") || teaserId) && (
+              <div className="hero-actions" style={{ display: "flex", flexWrap: "wrap", gap: 12, alignSelf: "flex-start" }}>
+                {site.show("registration") && <a
+                  href="#registration"
+                  className="hero-cta"
+                  style={{
+                    display: "inline-block",
+                    fontFamily: BC,
+                    fontWeight: 800,
+                    fontSize: 14,
+                    letterSpacing: 3,
+                    color: O,
+                    background: "#fff",
+                    padding: "14px 32px",
+                    textDecoration: "none",
+                    border: "2px solid #fff",
+                    transition: "background 0.2s, color 0.2s",
+                  }}
+                  onMouseEnter={(e) => {
+                    const a = e.currentTarget as HTMLAnchorElement
+                    a.style.background = "transparent"
+                    a.style.color = "#fff"
+                  }}
+                  onMouseLeave={(e) => {
+                    const a = e.currentTarget as HTMLAnchorElement
+                    a.style.background = "#fff"
+                    a.style.color = O
+                  }}
+                >
+                  {hero.tombol}
+                </a>}
+                {teaserId && (
+                  <button
+                    type="button"
+                    className="hero-cta hero-teaser"
+                    onClick={() => setTeaserOpen(true)}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 10,
+                      fontFamily: BC,
+                      fontWeight: 800,
+                      fontSize: 14,
+                      letterSpacing: 3,
+                      color: "#fff",
+                      background: "transparent",
+                      padding: "14px 32px",
+                      border: "2px solid #fff",
+                      cursor: "pointer",
+                      transition: "background 0.2s, color 0.2s",
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = "#fff"
+                      e.currentTarget.style.color = O
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = "transparent"
+                      e.currentTarget.style.color = "#fff"
+                    }}
+                  >
+                    <span aria-hidden style={{ width: 0, height: 0, borderTop: "6px solid transparent", borderBottom: "6px solid transparent", borderLeft: "10px solid currentColor", flex: "none" }} />
+                    {teaserLabel}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Grey zone: countdown */}
@@ -766,7 +857,7 @@ function Hero() {
           />
         </div>
       </div>
-
+      {teaserOpen && teaserId && <TeaserModal videoId={teaserId} title={teaserLabel} onClose={closeTeaser} />}
     </section>
   )
 }
@@ -2202,7 +2293,7 @@ function Gallery() {
           style={{
             fontFamily: BB,
             fontSize: 13,
-            color: "#555",
+            color: "#fff",
             textAlign: "center",
             marginTop: 32,
           }}
@@ -2215,12 +2306,21 @@ function Gallery() {
 }
 
 // ── Contact ────────────────────────────────────────────────────────────────────
+function officialSocial(items: { nama: string; link: string }[]) {
+  return items.flatMap((item) => {
+    const href = httpUrl(item.link)
+    const nama = item.nama.trim()
+    return href && nama ? [{ nama, href }] : []
+  })
+}
+
 function Contact() {
   const site = useSite()
   const copy = site.contact
   const [form, setForm] = useState({ name: "", email: "", message: "" })
   const [sent, setSent] = useState(false)
   if (!site.show("contact") || !copy) return null
+  const sosial = officialSocial(copy.sosial)
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -2301,6 +2401,7 @@ function Contact() {
               </div>
             ))}
 
+            {sosial.length > 0 && (
             <div style={{ marginTop: 28 }}>
               <div
                 style={{
@@ -2314,11 +2415,13 @@ function Contact() {
               >
                 {copy.sosialJudul}
               </div>
-              <div style={{ display: "flex", gap: 10 }}>
-                {copy.sosial.map((s) => (
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {sosial.map((item) => (
                   <a
-                    key={s}
-                    href="#contact"
+                    key={item.href}
+                    href={item.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     style={{
                       fontFamily: BC,
                       fontWeight: 700,
@@ -2341,11 +2444,12 @@ function Contact() {
                       a.style.borderColor = "rgba(255,255,255,0.1)"
                     }}
                   >
-                    {s.toUpperCase()}
+                    {item.nama.toUpperCase()}
                   </a>
                 ))}
               </div>
             </div>
+            )}
           </div>
 
           {/* Right: form */}
@@ -2583,7 +2687,7 @@ function Footer() {
             textAlign: "center",
             fontFamily: BB,
             fontSize: 12,
-            color: "#333",
+            color: "#fff",
           }}
         >
           {site.footer.lokasi}
@@ -2706,6 +2810,7 @@ function MainApp() {
           .hero-title { font-size: clamp(38px, 11vw, 56px) !important; letter-spacing: 0.06em !important; margin-bottom: 18px !important; }
           .hero-orange > div:nth-of-type(1) { margin: 0 auto 20px !important; width: 56px !important; }
           .hero-orange p { font-size: 15px !important; margin-bottom: 32px !important; }
+          .hero-actions { flex-direction: column !important; align-self: stretch !important; width: 100%; }
           .hero-cta { align-self: stretch !important; text-align: center; padding: 16px 24px !important; }
           .hero-grey { height: auto !important; background: #4D4D4D; padding: 32px 20px 40px !important; justify-content: center; }
           .hero-cd { width: 100%; max-width: 420px; margin: 0 auto; }

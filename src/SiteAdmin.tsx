@@ -4,7 +4,9 @@ import {
   DEFAULT_MENUS,
   KONTEN,
   cloneIsi,
+  httpUrl,
   kontenDef,
+  youtubeId,
   type AkomodasiIsi,
   type BackgroundIsi,
   type ContactIsi,
@@ -102,6 +104,10 @@ function HeadForm({ value, onChange }: { value: SectionHead; onChange: (value: S
 }
 
 function HeroForm({ value, onChange }: { value: HeroIsi; onChange: (value: HeroIsi) => void }) {
+  const videoId = youtubeId(value.youtube)
+  const youtubeError = value.youtube.trim()
+    ? (videoId ? undefined : "Tautan ini belum dikenali sebagai video YouTube.")
+    : (value.videoAktif ? "Isi tautan YouTube agar tombol teaser tampil." : undefined)
   return (
     <>
       <Field label="Judul"><TextInput value={value.judul} onChange={(judul) => onChange({ ...value, judul })} /></Field>
@@ -110,6 +116,13 @@ function HeroForm({ value, onChange }: { value: HeroIsi; onChange: (value: HeroI
       <Field label="Teks tombol"><TextInput value={value.tombol} onChange={(tombol) => onChange({ ...value, tombol })} /></Field>
       <Field label="Label hitung mundur"><TextInput value={value.hitung} onChange={(hitung) => onChange({ ...value, hitung })} /></Field>
       <Field label="Mulai hitung mundur" hint="Format ISO, contoh 2027-07-14T08:00:00+07:00"><TextInput value={value.mulai} onChange={(mulai) => onChange({ ...value, mulai })} /></Field>
+      <Field label="Video teaser" hint="Tombol putar tampil di beranda bila video aktif dan tautan YouTube dikenali.">
+        <Switch on={value.videoAktif} label={value.videoAktif ? "AKTIF" : "NONAKTIF"} onChange={(videoAktif) => onChange({ ...value, videoAktif })} />
+      </Field>
+      <Field label="Teks tombol teaser"><TextInput value={value.tombolVideo} onChange={(tombolVideo) => onChange({ ...value, tombolVideo })} /></Field>
+      <Field label="Tautan YouTube" hint={"Contoh https://www.youtube.com/watch?v=xxxxxxxxxxx atau https://youtu.be/xxxxxxxxxxx"} error={youtubeError}>
+        <TextInput value={value.youtube} onChange={(youtube) => onChange({ ...value, youtube })} placeholder={"https://www.youtube.com/watch?v="} />
+      </Field>
     </>
   )
 }
@@ -382,7 +395,18 @@ function ContactForm({ value, onChange }: { value: ContactIsi; onChange: (value:
         <button type="button" style={ghost} onClick={() => onChange({ ...value, saluran: [...value.saluran, { label: "", value: "" }] })}>TAMBAH SALURAN</button>
       </Field>
       <Field label="Judul media sosial"><TextInput value={value.sosialJudul} onChange={(sosialJudul) => onChange({ ...value, sosialJudul })} /></Field>
-      <Field label="Media sosial"><StringList items={value.sosial} onChange={(sosial) => onChange({ ...value, sosial })} /></Field>
+      <Field label="Media sosial" hint="Tombol tampil di halaman kontak bila nama dan tautan https terisi.">
+        {value.sosial.map((item, index) => (
+          <Card key={index}>
+            <Field label="Nama"><TextInput value={item.nama} onChange={(nama) => onChange({ ...value, sosial: value.sosial.map((row, i) => i === index ? { ...row, nama } : row) })} /></Field>
+            <Field label="Tautan" hint={"Alamat lengkap, contoh https://www.instagram.com/akun"} error={item.link.trim() && !httpUrl(item.link) ? "Gunakan tautan http atau https." : undefined}>
+              <TextInput value={item.link} onChange={(link) => onChange({ ...value, sosial: value.sosial.map((row, i) => i === index ? { ...row, link } : row) })} placeholder={"https://"} />
+            </Field>
+            <Actions index={index} total={value.sosial.length} onMove={(dir) => onChange({ ...value, sosial: move(value.sosial, index, dir) })} onRemove={() => onChange({ ...value, sosial: value.sosial.filter((_, i) => i !== index) })} />
+          </Card>
+        ))}
+        <button type="button" style={ghost} onClick={() => onChange({ ...value, sosial: [...value.sosial, { nama: "", link: "" }] })}>TAMBAH MEDIA SOSIAL</button>
+      </Field>
     </>
   )
 }

@@ -19,6 +19,9 @@ export type HeroIsi = {
   tombol: string
   hitung: string
   mulai: string
+  videoAktif: boolean
+  youtube: string
+  tombolVideo: string
 }
 
 export type BackgroundIsi = {
@@ -96,7 +99,7 @@ export type ContactIsi = {
   paragraf: string
   saluran: { label: string; value: string }[]
   sosialJudul: string
-  sosial: string[]
+  sosial: { nama: string; link: string }[]
 }
 
 export type FooterIsi = { hakCipta: string; tambahan: string; lokasi: string }
@@ -144,6 +147,9 @@ const HERO: HeroIsi = {
   tombol: "DAFTAR SEKARANG",
   hitung: "MENGHITUNG MUNDUR",
   mulai: "2027-07-14T08:00:00+07:00",
+  videoAktif: false,
+  youtube: "",
+  tombolVideo: "TONTON TEASER",
 }
 
 const BACKGROUND: BackgroundIsi = {
@@ -356,7 +362,11 @@ const CONTACT: ContactIsi = {
     { label: "Instagram", value: "@tkspkbgpib2027" },
   ],
   sosialJudul: "MEDIA SOSIAL RESMI",
-  sosial: ["Instagram", "Facebook", "YouTube"],
+  sosial: [
+    { nama: "Instagram", link: "" },
+    { nama: "Facebook", link: "" },
+    { nama: "YouTube", link: "" },
+  ],
 }
 
 const FOOTER: FooterIsi = {
@@ -371,6 +381,43 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function text(value: unknown, fallback: string) {
   return typeof value === "string" ? value : fallback
+}
+
+function flag(value: unknown, fallback: boolean) {
+  return typeof value === "boolean" ? value : fallback
+}
+
+export function httpUrl(value: string) {
+  const raw = value.trim()
+  if (!raw) return ""
+  try {
+    const url = new URL(raw)
+    if (url.protocol !== "http:" && url.protocol !== "https:") return ""
+    return url.href
+  } catch {
+    return ""
+  }
+}
+
+export function youtubeId(value: string) {
+  const raw = value.trim()
+  if (/^[A-Za-z0-9_-]{11}$/.test(raw)) return raw
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    return ""
+  }
+  const host = url.hostname.replace(/^www\./, "")
+  const id = (candidate: string | undefined) => (candidate && /^[A-Za-z0-9_-]{11}$/.test(candidate) ? candidate : "")
+  if (host === "youtu.be") return id(url.pathname.split("/").filter(Boolean)[0])
+  if (host === "youtube.com" || host === "m.youtube.com" || host === "music.youtube.com" || host === "youtube-nocookie.com") {
+    const fromQuery = id(url.searchParams.get("v") ?? undefined)
+    if (fromQuery) return fromQuery
+    const parts = url.pathname.split("/").filter(Boolean)
+    if (parts[0] === "embed" || parts[0] === "shorts" || parts[0] === "live" || parts[0] === "v") return id(parts[1])
+  }
+  return ""
 }
 
 function texts(value: unknown, fallback: string[]) {
@@ -401,6 +448,9 @@ function parseHero(value: unknown): HeroIsi | null {
     tombol: text(value.tombol, HERO.tombol),
     hitung: text(value.hitung, HERO.hitung),
     mulai: text(value.mulai, HERO.mulai),
+    videoAktif: flag(value.videoAktif, HERO.videoAktif),
+    youtube: text(value.youtube, HERO.youtube),
+    tombolVideo: text(value.tombolVideo, HERO.tombolVideo),
   }
 }
 
@@ -560,8 +610,17 @@ function parseContact(value: unknown): ContactIsi | null {
     paragraf: text(value.paragraf, CONTACT.paragraf),
     saluran: rows(value.saluran, (row) => ({ label: text(row.label, ""), value: text(row.value, "") }), CONTACT.saluran),
     sosialJudul: text(value.sosialJudul, CONTACT.sosialJudul),
-    sosial: texts(value.sosial, CONTACT.sosial),
+    sosial: parseSosial(value.sosial),
   }
+}
+
+function parseSosial(value: unknown) {
+  if (!Array.isArray(value)) return CONTACT.sosial
+  return value.flatMap((item) => {
+    if (typeof item === "string") return [{ nama: item, link: "" }]
+    if (!isRecord(item)) return []
+    return [{ nama: text(item.nama, ""), link: text(item.link, "") }]
+  })
 }
 
 function parseFooter(value: unknown): FooterIsi | null {

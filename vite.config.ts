@@ -131,7 +131,19 @@ function figmaSiteConfiguration(config: FigmaSiteConfiguration): Plugin {
           tags.push({ tag: 'meta', attrs: { name: 'robots', content: 'noindex, nofollow' }, injectTo: 'head' })
         }
         if (favicon) {
-          tags.push({ tag: 'link', attrs: { rel: 'icon', href: favicon }, injectTo: 'head' })
+          const iconType = favicon.endsWith('.svg')
+            ? 'image/svg+xml'
+            : favicon.endsWith('.png')
+              ? 'image/png'
+              : favicon.endsWith('.ico')
+                ? 'image/x-icon'
+                : undefined
+          tags.push({
+            tag: 'link',
+            attrs: { rel: 'icon', href: favicon, ...(iconType ? { type: iconType } : {}) },
+            injectTo: 'head',
+          })
+          tags.push({ tag: 'link', attrs: { rel: 'apple-touch-icon', href: favicon }, injectTo: 'head' })
         }
         if (title) {
           tags.push({ tag: 'meta', attrs: { property: 'og:title', content: title }, injectTo: 'head' })

@@ -10,6 +10,7 @@ import { useAuth, LoginPage, RegistrationPage, ProfilePage, isStaff, isMupel, mu
 import { AdminPanel } from "@/Admin"
 import { PublicPeserta, KARTU_PREFIX } from "@/PesertaPublic"
 import { SiteProvider, useSite, type NavItem } from "@/siteContent"
+import { supabase } from "@/lib/supabase"
 import { DEFAULT_RUNDOWN, httpUrl, youtubeId } from "@/siteDefaults"
 
 // ── Style tokens ───────────────────────────────────────────────────────────────
@@ -2314,16 +2315,46 @@ function officialSocial(items: { nama: string; link: string }[]) {
   })
 }
 
+function contactSendError(message: string) {
+  if (/nama_check|btrim\(nama\)/i.test(message)) return "Nama minimal 2 karakter."
+  if (/pesan_check|btrim\(pesan\)/i.test(message)) return "Pesan minimal 5 karakter."
+  if (/email_check/i.test(message)) return "Format email tidak valid."
+  if (/failed to fetch|network/i.test(message)) return "Pesan gagal terkirim. Periksa koneksi lalu coba lagi."
+  return "Pesan gagal terkirim. Coba lagi."
+}
+
 function Contact() {
   const site = useSite()
   const copy = site.contact
   const [form, setForm] = useState({ name: "", email: "", message: "" })
   const [sent, setSent] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState("")
   if (!site.show("contact") || !copy) return null
   const sosial = officialSocial(copy.sosial)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (sending) return
+    const nama = form.name.trim()
+    const email = form.email.trim().toLowerCase()
+    const pesan = form.message.trim()
+    if (nama.length < 2) {
+      setError("Nama minimal 2 karakter.")
+      return
+    }
+    if (pesan.length < 5) {
+      setError("Pesan minimal 5 karakter.")
+      return
+    }
+    setSending(true)
+    setError("")
+    const { error: insertError } = await supabase.from("pesan_kontak").insert({ nama, email, pesan })
+    setSending(false)
+    if (insertError) {
+      setError(contactSendError(insertError.message))
+      return
+    }
     setSent(true)
   }
 
@@ -2504,7 +2535,7 @@ function Contact() {
                       type={field === "email" ? "email" : "text"}
                       required
                       value={form[field]}
-                      onChange={(e) => setForm({ ...form, [field]: e.target.value })}
+                      onChange={(e) => setForm((prev) => ({ ...prev, [field]: e.target.value }))}
                       style={{
                         width: "100%",
                         background: "#555",
@@ -2523,6 +2554,8 @@ function Contact() {
                         e.target.style.borderColor = "rgba(255,109,0,0.2)"
                       }}
                       placeholder={field === "name" ? "Nama Anda" : "email@anda.com"}
+                      minLength={field === "name" ? 2 : undefined}
+                      autoComplete={field === "name" ? "name" : "email"}
                     />
                   </div>
                 ))}
@@ -2543,7 +2576,7 @@ function Contact() {
                   <textarea
                     required
                     value={form.message}
-                    onChange={(e) => setForm({ ...form, message: e.target.value })}
+                    onChange={(e) => setForm((prev) => ({ ...prev, message: e.target.value }))}
                     rows={5}
                     style={{
                       width: "100%",
@@ -2564,10 +2597,17 @@ function Contact() {
                       e.target.style.borderColor = "rgba(255,109,0,0.2)"
                     }}
                     placeholder="Tulis pesan Anda di sini..."
+                    minLength={5}
                   />
                 </div>
+                {error && (
+                  <p role="alert" style={{ fontFamily: BB, color: "#ff8a80", margin: 0, fontSize: 14 }}>
+                    {error}
+                  </p>
+                )}
                 <button
                   type="submit"
+                  disabled={sending}
                   style={{
                     background: O,
                     color: "#fff",
@@ -2577,7 +2617,8 @@ function Contact() {
                     letterSpacing: 3,
                     padding: "16px 32px",
                     border: "none",
-                    cursor: "pointer",
+                    cursor: sending ? "wait" : "pointer",
+                    opacity: sending ? 0.7 : 1,
                     transition: "background 0.2s",
                     alignSelf: "flex-start",
                   }}
@@ -2588,7 +2629,7 @@ function Contact() {
                     ;(e.target as HTMLButtonElement).style.background = O
                   }}
                 >
-                  KIRIM PESAN
+                  {sending ? "MENGIRIM..." : "KIRIM PESAN"}
                 </button>
               </form>
             )}

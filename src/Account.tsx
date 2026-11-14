@@ -1,3 +1,4 @@
+import { jemaatForMupel } from "@/jemaatData"
 import { MedicalTab, TravelTab } from "@/Logistics"
 import React, { useState, useEffect, useRef, useCallback } from "react"
 import logo from "@/imports/LOGO_TKSGPIB27__3_.png"
@@ -70,7 +71,7 @@ function rowToUser(data: { id: string; nama: string; email: string; peran: strin
     name: data.nama,
     email: data.email,
     role: data.peran as Role,
-    mupel: data.mupel ?? "",
+    mupel: data.mupel ? mupelText(data.mupel) : "",
     whatsapp: data.whatsapp ?? "",
     gereja: data.gereja ?? "",
   }
@@ -203,10 +204,17 @@ export const MUPEL = [
   { code: "SUMUT-ACEH", name: "Sumatera Utara dan Aceh" },
 ] as const
 
-export const isMupel = (value: string) => MUPEL.some((item) => item.code === value)
-export const mupelText = (code: string) => {
-  const row = MUPEL.find((item) => item.code === code)
-  return row ? `${row.code} (${row.name})` : code
+export const mupelLabel = (item: { code: string; name: string }) => `${item.code}(${item.name})`
+
+export function mupelByValue(value: string) {
+  const raw = value.trim()
+  return MUPEL.find((item) => item.code === raw || mupelLabel(item) === raw)
+}
+
+export const isMupel = (value: string) => !!mupelByValue(value)
+export const mupelText = (value: string) => {
+  const row = mupelByValue(value)
+  return row ? mupelLabel(row) : value
 }
 
 const WA_RE = /^(\+?62|0)8\d{7,12}$/
@@ -217,7 +225,7 @@ export type ProfileInput = { name: string; mupel: string; whatsapp: string; gere
 export async function updateOwnProfile(input: ProfileInput) {
   const session = await requireUser()
   const name = input.name.trim()
-  const mupel = input.mupel.trim()
+  const mupel = mupelText(input.mupel.trim())
   const gereja = input.gereja.trim()
   const whatsapp = normalizeWa(input.whatsapp)
   if (name.length < 3) throw new Error("Nama minimal 3 karakter.")
@@ -271,7 +279,7 @@ export function useAuth() {
 
   const signup = async (name: string, email: string, password: string, mupel: string) => {
     const mail = email.trim().toLowerCase()
-    const asal = mupel.trim()
+    const asal = mupelText(mupel.trim())
     if (!isMupel(asal)) throw new Error("Pilih asal mupel.")
     const { data, error } = await supabase.auth.signUp({
       email: mail,
@@ -1553,18 +1561,52 @@ export function MupelSelect({
   invalid?: boolean
 }) {
   const known = isMupel(value)
+  const selected = known ? mupelText(value) : value
   return (
     <select
       id={id}
       className="tks-input"
       disabled={disabled}
-      value={value}
+      value={selected}
       onChange={(e) => onChange?.(e.target.value)}
       style={{ ...inputStyle, ...(invalid ? { borderColor: "#ff8a65" } : {}), ...(disabled ? { cursor: "default" } : {}) }}
     >
       <option value="">{disabled ? "Asal mupel belum diisi" : "Pilih asal mupel…"}</option>
       {MUPEL.map((item) => (
-        <option key={item.code} value={item.code}>{item.code} ({item.name})</option>
+        <option key={item.code} value={mupelLabel(item)}>{mupelLabel(item)}</option>
+      ))}
+      {selected && !known && <option value={selected}>{selected}</option>}
+    </select>
+  )
+}
+
+export function GerejaSelect({
+  id,
+  mupel,
+  value,
+  onChange,
+  invalid,
+}: {
+  id: string
+  mupel: string
+  value: string
+  onChange?: (value: string) => void
+  invalid?: boolean
+}) {
+  const list = jemaatForMupel(mupel)
+  const known = list.includes(value)
+  return (
+    <select
+      id={id}
+      className="tks-input"
+      disabled={!mupel}
+      value={value}
+      onChange={(e) => onChange?.(e.target.value)}
+      style={{ ...inputStyle, ...(invalid ? { borderColor: "#ff8a65" } : {}), ...(!mupel ? { cursor: "default" } : {}) }}
+    >
+      <option value="">{mupel ? "Pilih asal gereja…" : "Isi asal mupel terlebih dahulu"}</option>
+      {list.map((nama) => (
+        <option key={nama} value={nama}>{nama}</option>
       ))}
       {value && !known && <option value={value}>{value}</option>}
     </select>
@@ -2175,7 +2217,10 @@ function RegistrationForm({
     if (!form.gender) e.gender = "Pilih jenis kelamin."
     if (!foto) e.foto = "Foto wajib diunggah."
     if (!ktp) e.ktp = "Unggah KTP atau identitas diri."
-    if (!form.gereja.trim()) e.gereja = "Asal gereja wajib diisi."
+    const daftarGereja = jemaatForMupel(user.mupel)
+    if (!form.gereja.trim()) e.gereja = "Pilih asal gereja."
+    else if (daftarGereja.length > 0 && !daftarGereja.includes(form.gereja) && form.gereja !== existing?.gereja)
+      e.gereja = "Pilih jemaat dari daftar mupel ini."
     if (!isMupel(user.mupel)) e.mupel = "Isi asal mupel pada profil akun kontingen."
     if (!/^(\+?62|0)8\d{7,12}$/.test(form.wa.replace(/[\s-]/g, "")))
       e.wa = "Masukkan nomor WhatsApp yang valid, contoh 081234567890."
@@ -2311,12 +2356,12 @@ function RegistrationForm({
           </button>
         </Field>
 
-        <Field label="7. Asal Gereja" htmlFor="r-gereja" error={errors.gereja}>
-          <input id="r-gereja" className="tks-input" style={{ ...inputStyle, ...err("gereja") }} value={form.gereja} onChange={text("gereja")} placeholder="Nama jemaat GPIB" />
+        <Field label="7. Asal Mupel" htmlFor="r-mupel" error={errors.mupel} hint="Otomatis mengikuti asal mupel akun kontingen.">
+          <MupelSelect id="r-mupel" value={user.mupel || form.mupel} disabled invalid={!!errors.mupel} />
         </Field>
 
-        <Field label="8. Asal Mupel" htmlFor="r-mupel" error={errors.mupel} hint="Otomatis mengikuti asal mupel akun kontingen.">
-          <MupelSelect id="r-mupel" value={user.mupel || form.mupel} disabled invalid={!!errors.mupel} />
+        <Field label="8. Asal Gereja" htmlFor="r-gereja" error={errors.gereja} hint="Hanya menampilkan jemaat pada mupel ini.">
+          <GerejaSelect id="r-gereja" mupel={user.mupel || form.mupel} value={form.gereja} invalid={!!errors.gereja} onChange={set("gereja")} />
         </Field>
 
         <Field label="9. Kontak WhatsApp (Contact Person)" htmlFor="r-wa" error={errors.wa} hint="Nomor WhatsApp aktif yang dapat dihubungi panitia.">

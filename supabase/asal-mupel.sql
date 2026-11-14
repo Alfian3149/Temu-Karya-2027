@@ -6,13 +6,91 @@ alter table public.profil add column if not exists whatsapp text;
 alter table public.profil add column if not exists gereja text;
 
 alter table public.profil drop constraint if exists profil_mupel_cek;
+
+update public.profil
+set mupel = case mupel
+  when 'BABEL' then 'BABEL(Bangka Belitung)'
+  when 'BALI-NTB' then 'BALI-NTB(Bali dan Nusa Tenggara Barat)'
+  when 'BANTEN' then 'BANTEN(Banten)'
+  when 'BEKASI' then 'BEKASI(Bekasi)'
+  when 'JABAR I' then 'JABAR I(Jawa Barat I)'
+  when 'JABAR II' then 'JABAR II(Jawa Barat II)'
+  when 'JAKBAR' then 'JAKBAR(Jakarta Barat)'
+  when 'JAKPUS' then 'JAKPUS(Jakarta Pusat)'
+  when 'JAKSEL' then 'JAKSEL(Jakarta Selatan)'
+  when 'JAKTIM' then 'JAKTIM(Jakarta Timur)'
+  when 'JAKUT' then 'JAKUT(Jakarta Utara)'
+  when 'JAMBI' then 'JAMBI(Jambi)'
+  when 'JATENG-DIY' then 'JATENG-DIY(Jawa Tengah dan D.I. Yogyakarta)'
+  when 'JATIM' then 'JATIM(Jawa Timur)'
+  when 'KALBAR' then 'KALBAR(Kalimantan Barat)'
+  when 'KALSELTENG' then 'KALSELTENG(Kalimantan Selatan dan Kalimantan Tengah)'
+  when 'KALTARA-BERKAT' then 'KALTARA-BERKAT(Kalimantan Utara dan Berau/Kaltim bagian utara)'
+  when 'KALTIM I' then 'KALTIM I(Kalimantan Timur I)'
+  when 'KALTIM II' then 'KALTIM II(Kalimantan Timur II)'
+  when 'KEPRI' then 'KEPRI(Kepulauan Riau)'
+  when 'LAMPUNG' then 'LAMPUNG(Lampung)'
+  when 'SULSELBARA' then 'SULSELBARA(Sulawesi Selatan, Sulawesi Barat, dan Sulawesi Tenggara)'
+  when 'SUMBAR-RIAU' then 'SUMBAR-RIAU(Sumatera Barat dan Riau)'
+  when 'SUMSEL' then 'SUMSEL(Sumatera Selatan)'
+  when 'SUMUT-ACEH' then 'SUMUT-ACEH(Sumatera Utara dan Aceh)'
+  else mupel
+end
+where mupel in (
+  'BABEL', 'BALI-NTB', 'BANTEN', 'BEKASI', 'JABAR I', 'JABAR II',
+  'JAKBAR', 'JAKPUS', 'JAKSEL', 'JAKTIM', 'JAKUT', 'JAMBI',
+  'JATENG-DIY', 'JATIM', 'KALBAR', 'KALSELTENG', 'KALTARA-BERKAT',
+  'KALTIM I', 'KALTIM II', 'KEPRI', 'LAMPUNG', 'SULSELBARA',
+  'SUMBAR-RIAU', 'SUMSEL', 'SUMUT-ACEH'
+);
+
+update public.peserta
+set mupel = case mupel
+  when 'BABEL' then 'BABEL(Bangka Belitung)'
+  when 'BALI-NTB' then 'BALI-NTB(Bali dan Nusa Tenggara Barat)'
+  when 'BANTEN' then 'BANTEN(Banten)'
+  when 'BEKASI' then 'BEKASI(Bekasi)'
+  when 'JABAR I' then 'JABAR I(Jawa Barat I)'
+  when 'JABAR II' then 'JABAR II(Jawa Barat II)'
+  when 'JAKBAR' then 'JAKBAR(Jakarta Barat)'
+  when 'JAKPUS' then 'JAKPUS(Jakarta Pusat)'
+  when 'JAKSEL' then 'JAKSEL(Jakarta Selatan)'
+  when 'JAKTIM' then 'JAKTIM(Jakarta Timur)'
+  when 'JAKUT' then 'JAKUT(Jakarta Utara)'
+  when 'JAMBI' then 'JAMBI(Jambi)'
+  when 'JATENG-DIY' then 'JATENG-DIY(Jawa Tengah dan D.I. Yogyakarta)'
+  when 'JATIM' then 'JATIM(Jawa Timur)'
+  when 'KALBAR' then 'KALBAR(Kalimantan Barat)'
+  when 'KALSELTENG' then 'KALSELTENG(Kalimantan Selatan dan Kalimantan Tengah)'
+  when 'KALTARA-BERKAT' then 'KALTARA-BERKAT(Kalimantan Utara dan Berau/Kaltim bagian utara)'
+  when 'KALTIM I' then 'KALTIM I(Kalimantan Timur I)'
+  when 'KALTIM II' then 'KALTIM II(Kalimantan Timur II)'
+  when 'KEPRI' then 'KEPRI(Kepulauan Riau)'
+  when 'LAMPUNG' then 'LAMPUNG(Lampung)'
+  when 'SULSELBARA' then 'SULSELBARA(Sulawesi Selatan, Sulawesi Barat, dan Sulawesi Tenggara)'
+  when 'SUMBAR-RIAU' then 'SUMBAR-RIAU(Sumatera Barat dan Riau)'
+  when 'SUMSEL' then 'SUMSEL(Sumatera Selatan)'
+  when 'SUMUT-ACEH' then 'SUMUT-ACEH(Sumatera Utara dan Aceh)'
+  else mupel
+end
+where mupel in (
+  'BABEL', 'BALI-NTB', 'BANTEN', 'BEKASI', 'JABAR I', 'JABAR II',
+  'JAKBAR', 'JAKPUS', 'JAKSEL', 'JAKTIM', 'JAKUT', 'JAMBI',
+  'JATENG-DIY', 'JATIM', 'KALBAR', 'KALSELTENG', 'KALTARA-BERKAT',
+  'KALTIM I', 'KALTIM II', 'KEPRI', 'LAMPUNG', 'SULSELBARA',
+  'SUMBAR-RIAU', 'SUMSEL', 'SUMUT-ACEH'
+);
+
 alter table public.profil add constraint profil_mupel_cek check (
   mupel is null or mupel in (
-    'BABEL', 'BALI-NTB', 'BANTEN', 'BEKASI', 'JABAR I', 'JABAR II',
-    'JAKBAR', 'JAKPUS', 'JAKSEL', 'JAKTIM', 'JAKUT', 'JAMBI',
-    'JATENG-DIY', 'JATIM', 'KALBAR', 'KALSELTENG', 'KALTARA-BERKAT',
-    'KALTIM I', 'KALTIM II', 'KEPRI', 'LAMPUNG', 'SULSELBARA',
-    'SUMBAR-RIAU', 'SUMSEL', 'SUMUT-ACEH'
+    'BABEL(Bangka Belitung)', 'BALI-NTB(Bali dan Nusa Tenggara Barat)', 'BANTEN(Banten)', 'BEKASI(Bekasi)',
+    'JABAR I(Jawa Barat I)', 'JABAR II(Jawa Barat II)', 'JAKBAR(Jakarta Barat)', 'JAKPUS(Jakarta Pusat)',
+    'JAKSEL(Jakarta Selatan)', 'JAKTIM(Jakarta Timur)', 'JAKUT(Jakarta Utara)', 'JAMBI(Jambi)',
+    'JATENG-DIY(Jawa Tengah dan D.I. Yogyakarta)', 'JATIM(Jawa Timur)', 'KALBAR(Kalimantan Barat)',
+    'KALSELTENG(Kalimantan Selatan dan Kalimantan Tengah)', 'KALTARA-BERKAT(Kalimantan Utara dan Berau/Kaltim bagian utara)',
+    'KALTIM I(Kalimantan Timur I)', 'KALTIM II(Kalimantan Timur II)', 'KEPRI(Kepulauan Riau)', 'LAMPUNG(Lampung)',
+    'SULSELBARA(Sulawesi Selatan, Sulawesi Barat, dan Sulawesi Tenggara)', 'SUMBAR-RIAU(Sumatera Barat dan Riau)',
+    'SUMSEL(Sumatera Selatan)', 'SUMUT-ACEH(Sumatera Utara dan Aceh)'
   )
 );
 
@@ -35,11 +113,14 @@ declare
   asal text := nullif(btrim(new.raw_user_meta_data ->> 'mupel'), '');
 begin
   if asal is not null and asal not in (
-    'BABEL', 'BALI-NTB', 'BANTEN', 'BEKASI', 'JABAR I', 'JABAR II',
-    'JAKBAR', 'JAKPUS', 'JAKSEL', 'JAKTIM', 'JAKUT', 'JAMBI',
-    'JATENG-DIY', 'JATIM', 'KALBAR', 'KALSELTENG', 'KALTARA-BERKAT',
-    'KALTIM I', 'KALTIM II', 'KEPRI', 'LAMPUNG', 'SULSELBARA',
-    'SUMBAR-RIAU', 'SUMSEL', 'SUMUT-ACEH'
+    'BABEL(Bangka Belitung)', 'BALI-NTB(Bali dan Nusa Tenggara Barat)', 'BANTEN(Banten)', 'BEKASI(Bekasi)',
+    'JABAR I(Jawa Barat I)', 'JABAR II(Jawa Barat II)', 'JAKBAR(Jakarta Barat)', 'JAKPUS(Jakarta Pusat)',
+    'JAKSEL(Jakarta Selatan)', 'JAKTIM(Jakarta Timur)', 'JAKUT(Jakarta Utara)', 'JAMBI(Jambi)',
+    'JATENG-DIY(Jawa Tengah dan D.I. Yogyakarta)', 'JATIM(Jawa Timur)', 'KALBAR(Kalimantan Barat)',
+    'KALSELTENG(Kalimantan Selatan dan Kalimantan Tengah)', 'KALTARA-BERKAT(Kalimantan Utara dan Berau/Kaltim bagian utara)',
+    'KALTIM I(Kalimantan Timur I)', 'KALTIM II(Kalimantan Timur II)', 'KEPRI(Kepulauan Riau)', 'LAMPUNG(Lampung)',
+    'SULSELBARA(Sulawesi Selatan, Sulawesi Barat, dan Sulawesi Tenggara)', 'SUMBAR-RIAU(Sumatera Barat dan Riau)',
+    'SUMSEL(Sumatera Selatan)', 'SUMUT-ACEH(Sumatera Utara dan Aceh)'
   ) then
     asal := null;
   end if;

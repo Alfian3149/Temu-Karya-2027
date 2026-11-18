@@ -89,7 +89,9 @@ export type GalleryIsi = {
   judul: string
   judulAksen: string
   catatan: string
-  item: { label: string; bg: string }[]
+  driveLabel: string
+  driveUrl: string
+  item: { label: string; bg: string; foto: string }[]
 }
 
 export type ContactIsi = {
@@ -339,14 +341,16 @@ const GALLERY: GalleryIsi = {
   kicker: "DOKUMENTASI",
   judul: "GALERI",
   judulAksen: "KEGIATAN",
-  catatan: "Foto & video dokumentasi pra-acara akan diperbarui secara berkala. Kilas balik TKS sebelumnya tersedia di media sosial resmi panitia.",
+  catatan: "Foto pilihan panitia. Dokumentasi lengkap, termasuk video, ada di tautan arsip.",
+  driveLabel: "LIHAT SEMUA FOTO",
+  driveUrl: "",
   item: [
-    { label: "Ibadah Bersama", bg: "#505050" },
-    { label: "Seminar", bg: "#484848" },
-    { label: "Workshop", bg: "#525252" },
-    { label: "Paduan Suara", bg: "#464646" },
-    { label: "Olahraga", bg: "#545454" },
-    { label: "Penutupan", bg: "#505050" },
+    { label: "Ibadah Bersama", bg: "#505050", foto: "" },
+    { label: "Seminar", bg: "#484848", foto: "" },
+    { label: "Workshop", bg: "#525252", foto: "" },
+    { label: "Paduan Suara", bg: "#464646", foto: "" },
+    { label: "Olahraga", bg: "#545454", foto: "" },
+    { label: "Penutupan", bg: "#505050", foto: "" },
   ],
 }
 
@@ -385,6 +389,23 @@ function text(value: unknown, fallback: string) {
 
 function flag(value: unknown, fallback: boolean) {
   return typeof value === "boolean" ? value : fallback
+}
+
+export function galleryImageUrl(value: string) {
+  const href = httpUrl(value)
+  if (!href) return ""
+  try {
+    const url = new URL(href)
+    const host = url.hostname.replace(/^www\./, "")
+    if (host === "drive.google.com") {
+      const fromPath = url.pathname.match(/\/d\/([^/]+)/)?.[1]
+      const id = fromPath || url.searchParams.get("id")
+      if (id && /^[\w-]+$/.test(id)) return `https://drive.google.com/thumbnail?id=${encodeURIComponent(id)}&sz=w1600`
+    }
+  } catch {
+    return href
+  }
+  return href
 }
 
 export function httpUrl(value: string) {
@@ -597,7 +618,9 @@ function parseGallery(value: unknown): GalleryIsi | null {
     judul: text(value.judul, GALLERY.judul),
     judulAksen: text(value.judulAksen, GALLERY.judulAksen),
     catatan: text(value.catatan, GALLERY.catatan),
-    item: rows(value.item, (row) => ({ label: text(row.label, ""), bg: text(row.bg, "#505050") }), GALLERY.item),
+    driveLabel: text(value.driveLabel, GALLERY.driveLabel),
+    driveUrl: text(value.driveUrl, GALLERY.driveUrl),
+    item: rows(value.item, (row) => ({ label: text(row.label, ""), bg: text(row.bg, "#505050"), foto: text(row.foto, "") }), GALLERY.item),
   }
 }
 

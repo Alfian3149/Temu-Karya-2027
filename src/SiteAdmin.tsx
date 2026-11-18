@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react"
-import { Banner, Field, PrimaryButton, inputStyle, smallBtn } from "@/Account"
+import { Banner, Field, PrimaryButton, compressPhoto, inputStyle, smallBtn } from "@/Account"
+import { supabase } from "@/lib/supabase"
 import {
   DEFAULT_MENUS,
   KONTEN,
@@ -13,6 +14,7 @@ import {
   type DownloadsIsi,
   type FaqIsi,
   type FooterIsi,
+  galleryImageUrl,
   type GalleryIsi,
   type HeroIsi,
   type RegistrationIsi,
@@ -360,20 +362,105 @@ function RegistrationForm({ value, onChange }: { value: RegistrationIsi; onChang
   )
 }
 
+const GALLERY_BUCKET = "galeri-situs"
+
+function galleryStoragePath(url: string) {
+  const marker = `/${GALLERY_BUCKET}/`
+  const at = url.indexOf(marker)
+  if (at < 0) return ""
+  return decodeURIComponent(url.slice(at + marker.length).split("?")[0])
+}
+
+async function discardGalleryFile(url: string) {
+  const path = galleryStoragePath(url)
+  if (!path) return
+  await supabase.storage.from(GALLERY_BUCKET).remove([path])
+}
+
+async function uploadGalleryPhoto(file: File) {
+  if (!file.type.startsWith("image/")) throw new Error("Pilih berkas gambar.")
+  if (file.size > 15 * 1024 * 1024) throw new Error("Foto terlalu besar. Maksimum 15 MB.")
+  const dataUrl = await compressPhoto(file, 1600)
+  const blob = await (await fetch(dataUrl)).blob()
+  const path = `${crypto.randomUUID()}.jpg`
+  const { error } = await supabase.storage.from(GALLERY_BUCKET).upload(path, blob, { contentType: "image/jpeg", upsert: false })
+  if (error) {
+    const missing = /bucket|not found/i.test(error.message)
+    throw new Error(missing ? "Penyimpanan galeri belum ada. Jalankan skrip supabase/galeri-situs.sql di SQL Editor Supabase, lalu unggah lagi." : error.message)
+  }
+  return supabase.storage.from(GALLERY_BUCKET).getPublicUrl(path).data.publicUrl
+}
+
 function GalleryForm({ value, onChange }: { value: GalleryIsi; onChange: (value: GalleryIsi) => void }) {
+  const [busy, setBusy] = useState<number | null>(null)
+  const [uploadError, setUploadError] = useState("")
+  const driveError = value.driveUrl.trim() && !httpUrl(value.driveUrl) ? "Gunakan tautan http atau https." : undefined
+  const setItem = (index: number, patch: Partial<GalleryIsi["item"][number]>) => {
+    onChange({ ...value, item: value.item.map((row, i) => i === index ? { ...row, ...patch } : row) })
+  }
+  const onUpload = async (index: number, file: File) => {
+    setBusy(index)
+    setUploadError("")
+    try {
+      const next = await uploadGalleryPhoto(file)
+      const previous = value.item[index]?.foto ?? ""
+      setItem(index, { foto: next })
+      if (previous && previous !== next) void discardGalleryFile(previous)
+    } catch (error) {
+      setUploadError((error as Error).message || "Foto gagal diunggah.")
+    } finally {
+      setBusy(null)
+    }
+  }
+  const clearPhoto = (index: number) => {
+    const previous = value.item[index]?.foto ?? ""
+    setItem(index, { foto: "" })
+    if (previous) void discardGalleryFile(previous)
+  }
   return (
     <>
       <HeadForm value={{ kicker: value.kicker, judul: value.judul, judulAksen: value.judulAksen }} onChange={(head) => onChange({ ...value, ...head })} />
       <Field label="Catatan"><Area value={value.catatan} onChange={(catatan) => onChange({ ...value, catatan })} /></Field>
-      <Field label="Kotak galeri" hint="Foto pada kotak 1 dan 3 tetap dari berkas situs. Yang diubah di sini adalah judul dan warna latar.">
-        {value.item.map((item, index) => (
-          <Card key={index}>
-            <Field label="Judul"><TextInput value={item.label} onChange={(label) => onChange({ ...value, item: value.item.map((row, i) => i === index ? { ...row, label } : row) })} /></Field>
-            <Field label="Warna latar" hint="Kode warna, contoh #505050"><TextInput value={item.bg} onChange={(bg) => onChange({ ...value, item: value.item.map((row, i) => i === index ? { ...row, bg } : row) })} /></Field>
-            <Actions index={index} total={value.item.length} onMove={(dir) => onChange({ ...value, item: move(value.item, index, dir) })} onRemove={() => onChange({ ...value, item: value.item.filter((_, i) => i !== index) })} />
-          </Card>
-        ))}
-        <button type="button" style={ghost} onClick={() => onChange({ ...value, item: [...value.item, { label: "", bg: "#505050" }] })}>TAMBAH KOTAK</button>
+      <Field label="Teks tombol arsip"><TextInput value={value.driveLabel} onChange={(driveLabel) => onChange({ ...value, driveLabel })} /></Field>
+      <Field label="Tautan Google Drive" hint="Folder foto dan video yang dibagikan kepada siapa saja dengan tautan. Tombol tampil di galeri bila tautan terisi." error={driveError}>
+        <TextInput value={value.driveUrl} onChange={(driveUrl) => onChange({ ...value, driveUrl })} placeholder="https://drive.google.com/drive/folders/..." />
+      </Field>
+      <Field label="Kotak galeri" hint="Foto paling atas menjadi foto utama. Unggah gambar, atau tempel tautan https. Foto bawaan kotak 1 dan 3 tampil sampai diganti. Setelah unggah, tekan simpan.">
+        {uploadError && <div role="alert" style={{ fontFamily: BB, fontSize: 13, color: "#ff8a65", marginBottom: 10 }}>{uploadError}</div>}
+        {value.item.map((item, index) => {
+          const preview = galleryImageUrl(item.foto)
+          return (
+            <Card key={index}>
+              <Field label="Judul"><TextInput value={item.label} onChange={(label) => setItem(index, { label })} /></Field>
+              {preview && (
+                <img src={preview} alt="" style={{ width: "100%", maxHeight: 180, objectFit: "cover", marginBottom: 12, background: item.bg || "#505050" }} />
+              )}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+                <label style={{ ...ghost, display: "inline-block", cursor: busy === null ? "pointer" : "wait" }}>
+                  {busy === index ? "MENGUNGGAH…" : "UNGGAH FOTO"}
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    disabled={busy !== null}
+                    style={{ display: "none" }}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0]
+                      e.target.value = ""
+                      if (file) void onUpload(index, file)
+                    }}
+                  />
+                </label>
+                {item.foto && <button type="button" style={danger} onClick={() => clearPhoto(index)}>HAPUS FOTO</button>}
+              </div>
+              <Field label="Tautan gambar" hint="Kosongkan bila foto diunggah dari komputer.">
+                <TextInput value={item.foto} onChange={(foto) => setItem(index, { foto })} placeholder="https://" />
+              </Field>
+              <Field label="Warna latar" hint="Tampil bila kotak belum punya foto. Kode warna, contoh #505050"><TextInput value={item.bg} onChange={(bg) => setItem(index, { bg })} /></Field>
+              <Actions index={index} total={value.item.length} onMove={(dir) => onChange({ ...value, item: move(value.item, index, dir) })} onRemove={() => { const previous = item.foto; onChange({ ...value, item: value.item.filter((_, i) => i !== index) }); if (previous) void discardGalleryFile(previous) }} />
+            </Card>
+          )
+        })}
+        <button type="button" style={ghost} onClick={() => onChange({ ...value, item: [...value.item, { label: "", bg: "#505050", foto: "" }] })}>TAMBAH KOTAK</button>
       </Field>
     </>
   )

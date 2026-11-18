@@ -3,6 +3,7 @@ import { SharedMinutes, SHARE_PREFIX } from "@/Secretary"
 import { PublicScoreboard, SCORE_LIVE, SCORE_SNAP } from "@/Scoreboard"
 import { DocsPortal, DOC_PREFIX, listExternalDocs } from "@/Documents"
 import logo from "@/imports/LOGO_TKSGPIB27__3_.png"
+import logoGpib from "@/imports/logo-gpib.png"
 import heroImage from "@/imports/hero-logo.png"
 import image1 from "@/imports/image-1.png" 
 import image2 from "@/imports/image-2.png"
@@ -11,7 +12,7 @@ import { AdminPanel } from "@/Admin"
 import { PublicPeserta, KARTU_PREFIX } from "@/PesertaPublic"
 import { SiteProvider, useSite, type NavItem } from "@/siteContent"
 import { supabase } from "@/lib/supabase"
-import { DEFAULT_RUNDOWN, httpUrl, youtubeId } from "@/siteDefaults"
+import { DEFAULT_RUNDOWN, galleryImageUrl, httpUrl, youtubeId } from "@/siteDefaults"
 
 // ── Style tokens ───────────────────────────────────────────────────────────────
 const BC = "'Barlow Condensed', sans-serif"
@@ -2299,8 +2300,43 @@ function Registration({
 function Gallery() {
   const site = useSite()
   const copy = site.gallery
+  const [open, setOpen] = useState<number | null>(null)
+  const shots = (copy?.item ?? []).map((item, index) => ({
+    ...item,
+    src: galleryImageUrl(item.foto) || GALLERY_SHOTS[index] || "",
+  }))
+  const viewable = shots.flatMap((item, index) => (item.src ? [index] : []))
+  const current = open !== null ? shots[open] : undefined
+
+  useEffect(() => {
+    if (open === null) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(null)
+      const at = viewable.indexOf(open)
+      if (at < 0) return
+      if (event.key === "ArrowRight") setOpen(viewable[(at + 1) % viewable.length])
+      if (event.key === "ArrowLeft") setOpen(viewable[(at - 1 + viewable.length) % viewable.length])
+    }
+    window.addEventListener("keydown", onKey)
+    const previous = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+    return () => {
+      window.removeEventListener("keydown", onKey)
+      document.body.style.overflow = previous
+    }
+  }, [open, viewable.join(",")])
+
   if (!site.show("gallery") || !copy) return null
-  const shots = copy.item.map((item, index) => ({ ...item, img: GALLERY_SHOTS[index] ?? null }))
+  const mode = shots.length >= 5 ? "many" : shots.length === 4 ? "four" : shots.length === 3 ? "three" : shots.length === 2 ? "two" : "one"
+  const drive = httpUrl(copy.driveUrl)
+  const driveLabel = copy.driveLabel.trim() || "LIHAT SEMUA FOTO"
+  const step = (dir: -1 | 1) => {
+    if (open === null) return
+    const at = viewable.indexOf(open)
+    if (at < 0) return
+    setOpen(viewable[(at + dir + viewable.length) % viewable.length])
+  }
+
   return (
     <section id="gallery" style={{ background: "#4a4a4a", padding: "100px 24px" }}>
       <div style={{ maxWidth: 1200, margin: "0 auto" }}>
@@ -2331,100 +2367,147 @@ function Gallery() {
           </h2>
         </div>
 
-        <div
-          style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 3 }}
-          className="gallery-grid"
-        >
-          {shots.map((item, i) => (
-            <div
-              key={i}
+        {shots.length > 0 && (
+          <div className={`gallery-mosaic gallery-${mode}`}>
+            {shots.map((item, index) => {
+              const lead = index === 0 && (mode === "many" || mode === "three")
+              const caption = item.label.trim()
+              const inner = (
+                <>
+                  {item.src ? (
+                    <img className="shot" src={item.src} alt="" loading={index === 0 ? "eager" : "lazy"} decoding="async" />
+                  ) : (
+                    <img src={logo} alt="" style={{ width: 72, height: 72, objectFit: "contain" }} />
+                  )}
+                  {caption && <span className="gallery-caption">{caption}</span>}
+                </>
+              )
+              const className = `gallery-tile${lead ? " gallery-lead" : ""}`
+              return item.src ? (
+                <button
+                  key={`${item.label}-${index}`}
+                  type="button"
+                  className={className}
+                  style={{ background: item.bg || "#505050" }}
+                  onClick={() => setOpen(index)}
+                  aria-label={caption ? `Lihat foto ${caption}` : "Lihat foto"}
+                >
+                  {inner}
+                </button>
+              ) : (
+                <div key={`${item.label}-${index}`} className={className} style={{ background: item.bg || "#505050" }}>
+                  {inner}
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {copy.catatan.trim() && (
+          <p
+            style={{
+              fontFamily: BB,
+              fontSize: 13,
+              color: "#fff",
+              textAlign: "center",
+              marginTop: 32,
+              lineHeight: 1.7,
+            }}
+          >
+            {copy.catatan}
+          </p>
+        )}
+
+        {drive && (
+          <div style={{ textAlign: "center", marginTop: 28 }}>
+            <a
+              href={drive}
+              target="_blank"
+              rel="noopener noreferrer"
               style={{
-                aspectRatio: "4/3",
-                background: item.bg,
-                position: "relative",
-                overflow: "hidden",
-                cursor: "pointer",
-                border: "1px solid rgba(255,109,0,0.1)",
+                display: "inline-block",
+                fontFamily: BC,
+                fontWeight: 800,
+                fontSize: 14,
+                letterSpacing: 3,
+                color: "#fff",
+                background: O,
+                padding: "14px 32px",
+                textDecoration: "none",
+                border: `2px solid ${O}`,
+                transition: "background 0.2s, color 0.2s",
               }}
               onMouseEnter={(e) => {
-                const ov = e.currentTarget.querySelector(
-                  ".gallery-overlay",
-                ) as HTMLElement
-                if (ov) ov.style.opacity = "1"
+                e.currentTarget.style.background = "transparent"
+                e.currentTarget.style.color = O
               }}
               onMouseLeave={(e) => {
-                const ov = e.currentTarget.querySelector(
-                  ".gallery-overlay",
-                ) as HTMLElement
-                if (ov) ov.style.opacity = "0"
+                e.currentTarget.style.background = O
+                e.currentTarget.style.color = "#fff"
               }}
             >
-              <div
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                {item.img ? (
-                  <img
-                    src={item.img}
-                    alt={item.label}
-                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                  />
-                ) : (
-                  <img
-                    src={logo}
-                    alt="TKS2027PKBGPIB"
-                    style={{ width: 80, height: 80, objectFit: "contain" }}
-                  />
-                )}
-              </div>
-              <div
-                className="gallery-overlay"
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  background: "rgba(255,109,0,0.88)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  opacity: 0,
-                  transition: "opacity 0.3s",
-                }}
-              >
-                <span
-                  style={{
-                    fontFamily: BC,
-                    fontWeight: 700,
-                    fontSize: 18,
-                    letterSpacing: 3,
-                    color: "#fff",
-                  }}
-                >
-                  {item.label}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
+              {driveLabel}
+            </a>
+          </div>
+        )}
+      </div>
 
-        <p
+      {current?.src && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={current.label.trim() || "Foto galeri"}
+          onClick={() => setOpen(null)}
           style={{
-            fontFamily: BB,
-            fontSize: 13,
-            color: "#fff",
-            textAlign: "center",
-            marginTop: 32,
+            position: "fixed",
+            inset: 0,
+            zIndex: 300,
+            background: "rgba(18,18,18,0.94)",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 16,
+            padding: 24,
           }}
         >
-          {copy.catatan}
-        </p>
-      </div>
+          <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16, maxWidth: 1100, width: "100%" }}>
+            <img
+              src={current.src}
+              alt={current.label.trim() || "Foto galeri"}
+              style={{ maxWidth: "100%", maxHeight: "74vh", objectFit: "contain" }}
+            />
+            {current.label.trim() && (
+              <div style={{ fontFamily: BC, fontWeight: 700, letterSpacing: 3, color: "#fff", textAlign: "center" }}>
+                {current.label.trim().toUpperCase()}
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center" }}>
+              {viewable.length > 1 && (
+                <button type="button" onClick={() => step(-1)} style={galleryNavBtn}>SEBELUMNYA</button>
+              )}
+              <button type="button" onClick={() => setOpen(null)} style={galleryNavBtn}>TUTUP</button>
+              {viewable.length > 1 && (
+                <button type="button" onClick={() => step(1)} style={galleryNavBtn}>BERIKUTNYA</button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   )
+}
+
+const galleryNavBtn: React.CSSProperties = {
+  fontFamily: BC,
+  fontWeight: 700,
+  fontSize: 13,
+  letterSpacing: 2,
+  color: "#fff",
+  background: "transparent",
+  border: "1px solid rgba(255,255,255,0.45)",
+  padding: "10px 18px",
+  cursor: "pointer",
 }
 
 // ── Contact ────────────────────────────────────────────────────────────────────
@@ -2434,6 +2517,87 @@ function officialSocial(items: { nama: string; link: string }[]) {
     const nama = item.nama.trim()
     return href && nama ? [{ nama, href }] : []
   })
+}
+
+function socialPlatform(nama: string, href: string) {
+  const s = `${nama} ${href}`.toLowerCase()
+  if (s.includes("instagram")) return "instagram"
+  if (s.includes("facebook") || s.includes("fb.com") || s.includes("fb.me")) return "facebook"
+  if (s.includes("youtube") || s.includes("youtu.be")) return "youtube"
+  if (s.includes("tiktok")) return "tiktok"
+  if (s.includes("whatsapp") || s.includes("wa.me")) return "whatsapp"
+  if (s.includes("linkedin")) return "linkedin"
+  if (s.includes("twitter") || s.includes("x.com")) return "x"
+  return "link"
+}
+
+function SocialGlyph({ platform }: { platform: string }) {
+  const props = {
+    width: 16,
+    height: 16,
+    viewBox: "0 0 24 24",
+    "aria-hidden": true,
+    style: { display: "block", flexShrink: 0 },
+  }
+  if (platform === "instagram") {
+    return (
+      <svg {...props}>
+        <rect x="3" y="3" width="18" height="18" rx="5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+        <circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" strokeWidth="1.8" />
+        <circle cx="17.4" cy="6.6" r="1.1" fill="currentColor" />
+      </svg>
+    )
+  }
+  if (platform === "facebook") {
+    return (
+      <svg {...props}>
+        <path fill="currentColor" d="M14.2 8.5h2.8V5.2h-2.8c-2.4 0-4 1.6-4 4.1v2.2H8v3.2h2.2V21h3.3v-6.3h2.5l.5-3.2h-3v-1.6c0-.7.4-1.4 1.7-1.4z" />
+      </svg>
+    )
+  }
+  if (platform === "youtube") {
+    return (
+      <svg {...props}>
+        <rect x="2" y="6" width="20" height="12" rx="3" fill="none" stroke="currentColor" strokeWidth="1.8" />
+        <path fill="currentColor" d="M10.5 9.4v5.2l4.8-2.6z" />
+      </svg>
+    )
+  }
+  if (platform === "tiktok") {
+    return (
+      <svg {...props}>
+        <path fill="currentColor" d="M14 4h2.2c.3 1.8 1.4 3.2 3.3 3.7v2.3c-1.2 0-2.3-.4-3.3-1.1v6.2c0 3.2-2.4 5.4-5.5 5.4S5.2 18.3 5.2 15.2c0-3.1 2.4-5.3 5.4-5.4v2.5c-1.5.1-2.8 1.2-2.8 2.9s1.3 2.8 2.9 2.8 2.8-1.2 2.8-2.9V4z" />
+      </svg>
+    )
+  }
+  if (platform === "whatsapp") {
+    return (
+      <svg {...props}>
+        <path fill="currentColor" d="M12 4.2A7.6 7.6 0 0 0 5.6 16l-.8 3.4 3.5-.8A7.6 7.6 0 1 0 12 4.2zm4.2 10.7c-.2.5-1 .9-1.4 1-.4.1-.8.2-2.6-.6-2.2-.9-3.6-3.1-3.7-3.3-.1-.2-.9-1.2-.9-2.3s.6-1.6.8-1.8c.2-.2.4-.3.6-.3h.4c.1 0 .3 0 .5.4.2.5.6 1.6.7 1.7.1.1.1.3 0 .4-.1.2-.2.3-.3.5l-.2.3c-.1.1-.2.2-.1.4.1.2.6 1 1.3 1.6.9.8 1.6 1 1.8 1.1.2.1.3.1.5-.1.1-.2.6-.7.8-.9.2-.2.3-.2.5-.1.2.1 1.4.7 1.6.8.2.1.4.2.4.3.1.2.1.8-.1 1.3z" />
+      </svg>
+    )
+  }
+  if (platform === "linkedin") {
+    return (
+      <svg {...props}>
+        <path fill="currentColor" d="M6.2 9.2H3.6V20h2.6V9.2zM4.9 4C4 4 3.3 4.7 3.3 5.6S4 7.2 4.9 7.2 6.5 6.5 6.5 5.6 5.8 4 4.9 4zM20.4 13.3c0-2.6-1.4-3.8-3.3-3.8-1.5 0-2.2.8-2.6 1.4V9.2H12V20h2.6v-5.4c0-1.4.3-2.8 2-2.8s1.8 1.6 1.8 2.9V20H21v-6.7h-.6z" />
+      </svg>
+    )
+  }
+  if (platform === "x") {
+    return (
+      <svg {...props}>
+        <path fill="currentColor" d="M5 4.5h3.2l3.3 4.6L15.4 4.5H19l-5.2 6.4L19.4 19.5h-3.2l-3.7-5.1-4.3 5.1H4.6l5.6-6.8L5 4.5z" />
+      </svg>
+    )
+  }
+  return (
+    <svg {...props}>
+      <path fill="none" stroke="currentColor" strokeWidth="1.8" d="M10 6H6.5A2.5 2.5 0 0 0 4 8.5v9A2.5 2.5 0 0 0 6.5 20h9a2.5 2.5 0 0 0 2.5-2.5V14" />
+      <path fill="none" stroke="currentColor" strokeWidth="1.8" d="M13 4h7v7" />
+      <path fill="none" stroke="currentColor" strokeWidth="1.8" d="M20 4l-9 9" />
+    </svg>
+  )
 }
 
 function contactSendError(message: string) {
@@ -2561,7 +2725,7 @@ function Contact() {
                   fontWeight: 700,
                   fontSize: 11,
                   letterSpacing: 4,
-                  color: "#555",
+                  color: "#f2f2f2",
                   marginBottom: 14,
                 }}
               >
@@ -2577,25 +2741,29 @@ function Contact() {
                     style={{
                       fontFamily: BC,
                       fontWeight: 700,
-                      fontSize: 11,
-                      letterSpacing: 2,
-                      color: "#777",
+                      fontSize: 12,
+                      letterSpacing: 1.5,
+                      color: "#f4f4f4",
                       padding: "10px 16px",
-                      border: "1px solid rgba(255,255,255,0.1)",
+                      border: "1px solid rgba(255,255,255,0.38)",
                       textDecoration: "none",
                       transition: "color 0.2s, border-color 0.2s",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
                     }}
                     onMouseEnter={(e) => {
-                      const a = e.currentTarget as HTMLAnchorElement
+                      const a = e.currentTarget
                       a.style.color = O
                       a.style.borderColor = O
                     }}
                     onMouseLeave={(e) => {
-                      const a = e.currentTarget as HTMLAnchorElement
-                      a.style.color = "#777"
-                      a.style.borderColor = "rgba(255,255,255,0.1)"
+                      const a = e.currentTarget
+                      a.style.color = "#f4f4f4"
+                      a.style.borderColor = "rgba(255,255,255,0.38)"
                     }}
                   >
+                    <SocialGlyph platform={socialPlatform(item.nama, item.href)} />
                     {item.nama.toUpperCase()}
                   </a>
                 ))}
@@ -2776,18 +2944,24 @@ function Footer() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1fr auto 1fr",
-            alignItems: "start",
+            gridTemplateColumns: "auto 1fr auto",
+            alignItems: "center",
             gap: 40,
             marginBottom: 32,
           }}
           className="footer-grid"
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            <img
+              src={logoGpib}
+              alt="Logo GPIB, Gereja Protestan di Indonesia bagian Barat"
+              style={{ width: 72, height: 72, objectFit: "contain", flexShrink: 0 }}
+            />
+            <div style={{ width: 1, height: 48, background: "rgba(255,255,255,0.28)", flexShrink: 0 }} />
             <img
               src={logo}
-              alt="Logo"
-              style={{ width: 36, height: 36, objectFit: "contain" }}
+              alt="Logo TKS2027PKBGPIB"
+              style={{ width: 72, height: 72, objectFit: "contain", flexShrink: 0 }}
             />
             <div>
               <div
@@ -2802,7 +2976,7 @@ function Footer() {
                 TKS<span style={{ color: O }}>2027PKBGPIB</span>
               </div>
               <div
-                style={{ fontFamily: BC, fontSize: 10, letterSpacing: 2, color: "#444" }}
+                style={{ fontFamily: BC, fontSize: 10, letterSpacing: 2, color: "#d4d4d4" }}
               >
                 TEMU KARYA SINODAL 2027
               </div>
@@ -2819,7 +2993,7 @@ function Footer() {
                   fontWeight: 600,
                   fontSize: 11,
                   letterSpacing: 2,
-                  color: "#555",
+                  color: "#e0e0e0",
                   textDecoration: "none",
                   transition: "color 0.2s",
                 }}
@@ -2827,7 +3001,7 @@ function Footer() {
                   ;(e.target as HTMLAnchorElement).style.color = O
                 }}
                 onMouseLeave={(e) => {
-                  ;(e.target as HTMLAnchorElement).style.color = "#555"
+                  ;(e.target as HTMLAnchorElement).style.color = "#e0e0e0"
                 }}
               >
                 {item.label}
@@ -2835,7 +3009,7 @@ function Footer() {
             ))}
           </div>
 
-          <div style={{ textAlign: "right", fontFamily: BB, fontSize: 12, color: "#444" }}>
+          <div style={{ textAlign: "right", fontFamily: BB, fontSize: 12, color: "#d4d4d4" }}>
             {site.footer.hakCipta}
             <br />
             {site.footer.tambahan}
@@ -2844,12 +3018,12 @@ function Footer() {
 
         <div
           style={{
-            borderTop: "1px solid rgba(255,255,255,0.04)",
-            paddingTop: 20,
+            borderTop: "1px solid rgba(255,255,255,0.14)",
+            paddingTop: 16,
             textAlign: "center",
             fontFamily: BB,
             fontSize: 12,
-            color: "#fff",
+            color: "#f2f2f2",
           }}
         >
           {site.footer.lokasi}
@@ -2983,11 +3157,26 @@ function MainApp() {
           .hero-cd-tile > div:last-child { font-size: 10px !important; margin-top: 6px !important; }
           .section-grid { grid-template-columns: 1fr !important; gap: 40px !important; }
           .program-grid { grid-template-columns: 1fr !important; }
-          .gallery-grid { grid-template-columns: repeat(2, 1fr) !important; }
+          .gallery-mosaic:not(.gallery-one) { grid-template-columns: 1fr 1fr !important; grid-auto-rows: 160px !important; }
+          .gallery-one { grid-template-columns: 1fr !important; grid-auto-rows: 240px !important; }
+          .gallery-mosaic .gallery-lead { grid-column: 1 / -1 !important; grid-row: auto !important; min-height: 230px; }
           .card-grid { grid-template-columns: 1fr !important; }
           .footer-grid { grid-template-columns: 1fr !important; }
-          .footer-grid > div:last-child { text-align: left !important; }
+          .footer-grid > div:last-child { text-align: center !important; }
         }
+        .gallery-mosaic { display: grid; gap: 3px; }
+        .gallery-one { grid-template-columns: 1fr; grid-auto-rows: minmax(320px, 46vw); }
+        .gallery-two { grid-template-columns: 1fr 1fr; grid-auto-rows: minmax(220px, 28vw); }
+        .gallery-three { grid-template-columns: 2fr 1fr; grid-auto-rows: minmax(180px, 20vw); }
+        .gallery-three .gallery-lead { grid-row: span 2; }
+        .gallery-four { grid-template-columns: 1fr 1fr; grid-auto-rows: minmax(200px, 24vw); }
+        .gallery-many { grid-template-columns: repeat(4, 1fr); grid-auto-rows: minmax(170px, 15vw); }
+        .gallery-many .gallery-lead { grid-column: span 2; grid-row: span 2; }
+        .gallery-tile { position: relative; display: flex; align-items: center; justify-content: center; overflow: hidden; min-height: 0; border: 1px solid rgba(255,109,0,0.12); padding: 0; color: inherit; }
+        button.gallery-tile { cursor: pointer; width: 100%; height: 100%; }
+        .gallery-tile img.shot { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+        .gallery-caption { position: absolute; left: 0; right: 0; bottom: 0; padding: 12px 16px; background: rgba(24,24,24,0.72); color: #fff; font-family: ${BC}; font-weight: 700; font-size: 15px; letter-spacing: 2px; text-transform: uppercase; transition: background 0.2s; }
+        .gallery-tile:hover .gallery-caption, .gallery-tile:focus-visible .gallery-caption { background: ${O}; }
         @media (min-width: 769px) {
           .show-mobile { display: none !important; }
         }

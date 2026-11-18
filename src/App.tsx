@@ -569,6 +569,127 @@ function Navbar({
   )
 }
 
+const IKLAN_YOUTUBE = "https://youtu.be/qCxSJXF8ex4"
+const IKLAN_KEY = "tks-iklan-terakhir"
+
+function hariIniJakarta() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(new Date())
+}
+
+function sudahNontonIklanHariIni() {
+  try {
+    return localStorage.getItem(IKLAN_KEY) === hariIniJakarta()
+  } catch {
+    return false
+  }
+}
+
+function catatIklanHariIni() {
+  try {
+    localStorage.setItem(IKLAN_KEY, hariIniJakarta())
+  } catch {
+    // Penyimpanan bisa ditolak di mode penyamaran. Overlay tetap bisa ditutup untuk kunjungan ini.
+  }
+}
+
+function kirimPerintahYouTube(frame: HTMLIFrameElement | null, func: "unMute" | "playVideo") {
+  frame?.contentWindow?.postMessage(JSON.stringify({ event: "command", func, args: [] }), "*")
+}
+
+function IklanModal({ videoId, onClose }: { videoId: string; onClose: () => void }) {
+  const closeRef = useRef<HTMLButtonElement>(null)
+  const frameRef = useRef<HTMLIFrameElement>(null)
+  const [suaraAktif, setSuaraAktif] = useState(false)
+  const src = useMemo(() => {
+    const params = new URLSearchParams({
+      autoplay: "1",
+      mute: "1",
+      playsinline: "1",
+      rel: "0",
+      enablejsapi: "1",
+      origin: window.location.origin,
+    })
+    return `https://www.youtube-nocookie.com/embed/${videoId}?${params}`
+  }, [videoId])
+
+  useEffect(() => {
+    closeRef.current?.focus()
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose()
+    }
+    document.addEventListener("keydown", onKey)
+    const previous = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+    return () => {
+      document.removeEventListener("keydown", onKey)
+      document.body.style.overflow = previous
+    }
+  }, [onClose])
+
+  const nyalakanSuara = () => {
+    kirimPerintahYouTube(frameRef.current, "unMute")
+    kirimPerintahYouTube(frameRef.current, "playVideo")
+    setSuaraAktif(true)
+  }
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Iklan"
+      onClick={onClose}
+      style={{ position: "fixed", inset: 0, zIndex: 500, background: "rgba(0,0,0,0.82)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}
+    >
+      <div onClick={(event) => event.stopPropagation()} style={{ width: "min(960px, 100%)", background: "#1c1c1c" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "14px 16px", flexWrap: "wrap" }}>
+          <div style={{ fontFamily: BC, fontWeight: 800, letterSpacing: 2, color: "#fff" }}>IKLAN</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={nyalakanSuara}
+              disabled={suaraAktif}
+              style={{ fontFamily: BC, fontWeight: 800, letterSpacing: 2, color: suaraAktif ? "#888" : "#fff", background: suaraAktif ? "transparent" : O, border: suaraAktif ? "1px solid rgba(255,255,255,0.25)" : "none", padding: "8px 14px", cursor: suaraAktif ? "default" : "pointer" }}
+            >
+              {suaraAktif ? "SUARA AKTIF" : "NYALAKAN SUARA"}
+            </button>
+            <button
+              ref={closeRef}
+              type="button"
+              onClick={onClose}
+              style={{ fontFamily: BC, fontWeight: 800, letterSpacing: 2, color: "#fff", background: "transparent", border: "1px solid rgba(255,255,255,0.4)", padding: "8px 14px", cursor: "pointer" }}
+            >
+              TUTUP
+            </button>
+          </div>
+        </div>
+        <div style={{ position: "relative", paddingTop: "56.25%", background: "#000" }}>
+          <iframe
+            ref={frameRef}
+            title="Iklan"
+            src={src}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowFullScreen
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: 0 }}
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function IklanPembuka() {
+  const videoId = youtubeId(IKLAN_YOUTUBE)
+  const [open, setOpen] = useState(() => Boolean(videoId) && !sudahNontonIklanHariIni())
+  const close = useMemo(() => () => setOpen(false), [])
+
+  useEffect(() => {
+    if (open) catatIklanHariIni()
+  }, [open])
+
+  if (!open || !videoId) return null
+  return <IklanModal videoId={videoId} onClose={close} />
+}
+
 function TeaserModal({ videoId, title, onClose }: { videoId: string; title: string; onClose: () => void }) {
   const closeRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
@@ -2910,6 +3031,7 @@ function MainApp() {
       {view === "admin" && user && isStaff(user) && <AdminPanel user={user} />}
       {view === "home" && (
         <>
+          <IklanPembuka />
           <Hero />
           <About tab={aboutTab} setTab={setAboutTab} />
           <Schedule tab={scheduleTab} setTab={setScheduleTab} />

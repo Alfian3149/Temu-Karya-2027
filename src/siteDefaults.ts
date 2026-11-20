@@ -82,6 +82,20 @@ export type RegistrationIsi = {
   statistik: { label: string; value: string }[]
   langkahJudul: string
   langkah: { step: string; title: string; desc: string }[]
+  panduanAktif: boolean
+  panduanJudul: string
+  panduanAkunLabel: string
+  panduanAkunYoutube: string
+  panduanPesertaLabel: string
+  panduanPesertaYoutube: string
+}
+
+export type PanduanBab = { id: string; label: string }
+
+export type Panduan = {
+  judul: string
+  akun: PanduanBab | null
+  peserta: PanduanBab | null
 }
 
 export type GalleryIsi = {
@@ -335,6 +349,12 @@ const REGISTRATION: RegistrationIsi = {
     { step: "04", title: "Konfirmasi Pembayaran", desc: "Transfer biaya dan kirim bukti ke sekretariat" },
     { step: "05", title: "Terima ID Peserta", desc: "Panitia mengirimkan nomor ID dan informasi acara" },
   ],
+  panduanAktif: false,
+  panduanJudul: "PANDUAN PENDAFTARAN",
+  panduanAkunLabel: "Cara membuat akun",
+  panduanAkunYoutube: "",
+  panduanPesertaLabel: "Cara mendaftarkan peserta",
+  panduanPesertaYoutube: "",
 }
 
 const GALLERY: GalleryIsi = {
@@ -417,6 +437,24 @@ export function httpUrl(value: string) {
     return url.href
   } catch {
     return ""
+  }
+}
+
+function panduanBab(label: string, fallback: string, youtube: string): PanduanBab | null {
+  const id = youtubeId(youtube)
+  if (!id) return null
+  return { id, label: label.trim() || fallback }
+}
+
+export function panduanFrom(value: RegistrationIsi | null): Panduan | null {
+  if (!value?.panduanAktif) return null
+  const akun = panduanBab(value.panduanAkunLabel, REGISTRATION.panduanAkunLabel, value.panduanAkunYoutube)
+  const peserta = panduanBab(value.panduanPesertaLabel, REGISTRATION.panduanPesertaLabel, value.panduanPesertaYoutube)
+  if (!akun && !peserta) return null
+  return {
+    judul: value.panduanJudul.trim() || REGISTRATION.panduanJudul,
+    akun,
+    peserta,
   }
 }
 
@@ -608,6 +646,12 @@ function parseRegistration(value: unknown): RegistrationIsi | null {
       title: text(row.title, ""),
       desc: text(row.desc, ""),
     }), REGISTRATION.langkah),
+    panduanAktif: flag(value.panduanAktif, REGISTRATION.panduanAktif),
+    panduanJudul: text(value.panduanJudul, REGISTRATION.panduanJudul),
+    panduanAkunLabel: text(value.panduanAkunLabel, REGISTRATION.panduanAkunLabel),
+    panduanAkunYoutube: text(value.panduanAkunYoutube, text(value.panduanYoutube, REGISTRATION.panduanAkunYoutube)),
+    panduanPesertaLabel: text(value.panduanPesertaLabel, REGISTRATION.panduanPesertaLabel),
+    panduanPesertaYoutube: text(value.panduanPesertaYoutube, REGISTRATION.panduanPesertaYoutube),
   }
 }
 

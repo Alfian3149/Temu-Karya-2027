@@ -11,8 +11,9 @@ import { useAuth, LoginPage, RegistrationPage, ProfilePage, isStaff, isMupel, mu
 import { AdminPanel } from "@/Admin"
 import { PublicPeserta, KARTU_PREFIX } from "@/PesertaPublic"
 import { SiteProvider, useSite, type NavItem } from "@/siteContent"
-import { supabase } from "@/lib/supabase"
-import { DEFAULT_RUNDOWN, galleryImageUrl, httpUrl, youtubeId } from "@/siteDefaults"
+import { authCallback, supabase } from "@/lib/supabase"
+import { PanduanPlayer, PANDUAN_FAQ } from "@/GuideVideo"
+import { DEFAULT_RUNDOWN, galleryImageUrl, httpUrl, panduanFrom, youtubeId } from "@/siteDefaults"
 
 // ── Style tokens ───────────────────────────────────────────────────────────────
 const BC = "'Barlow Condensed', sans-serif"
@@ -1794,6 +1795,7 @@ function Information({
   const stay = site.accommodation
   const faq = site.faq
   const downloads = site.downloads
+  const panduan = panduanFrom(site.registration)
   const [openFaq, setOpenFaq] = useState<number | null>(null)
   useEffect(() => {
     if (subs.length && !subs.some((item) => item.tab === tab)) setTab(subs[0].tab)
@@ -1953,7 +1955,10 @@ function Information({
 
         {tab === "faq" && faq && (
           <div style={{ maxWidth: 800 }}>
-            {faq.items.map((item, i) => (
+            {(panduan && site.show("registration") && !faq.items.some((item) => item.q.trim().toLowerCase() === PANDUAN_FAQ.toLowerCase())
+              ? [...faq.items, { q: PANDUAN_FAQ, a: "Buat akun pada halaman masuk, lalu daftarkan peserta dari portal kontingen. Di bagian Registration ada dua video terpisah: cara membuat akun dan cara mendaftarkan peserta. Tautan video akun juga ada di halaman masuk. Tautan video peserta ada di halaman pendaftaran kontingen.", panduan: true }]
+              : faq.items
+            ).map((item, i) => (
               <div
                 key={i}
                 style={{ borderBottom: "1px solid rgba(255,109,0,0.1)", overflow: "hidden" }}
@@ -2004,6 +2009,20 @@ function Information({
                     <p style={{ fontFamily: BB, color: "#888", lineHeight: 1.8, margin: 0, fontSize: 15 }}>
                       {item.a}
                     </p>
+                    {"panduan" in item && item.panduan && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const target = document.getElementById("registration")
+                          if (!target) return
+                          const top = target.getBoundingClientRect().top + window.scrollY - 76
+                          window.scrollTo({ top, behavior: "smooth" })
+                        }}
+                        style={{ marginTop: 16, fontFamily: BC, fontWeight: 800, fontSize: 13, letterSpacing: 1.5, color: "#fff", background: O, border: "none", padding: "12px 18px", cursor: "pointer" }}
+                      >
+                        LIHAT PANDUAN
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -2137,12 +2156,13 @@ function Registration({
 }) {
   const site = useSite()
   const copy = site.registration
+  const panduan = panduanFrom(copy)
   if (!site.show("registration") || !copy) return null
   return (
-    <section id="registration" style={{ background: O, padding: "100px 24px" }}>
+    <section id="registration" style={{ background: O, padding: "100px 24px", scrollMarginTop: 76 }}>
       <div style={{ maxWidth: 1200, margin: "0 auto" }}>
         <div
-          style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 80, alignItems: "center" }}
+          style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 80, alignItems: "start" }}
           className="section-grid"
         >
           <div>
@@ -2291,6 +2311,7 @@ function Registration({
             </div>
           </div>
         </div>
+        {panduan && <PanduanPlayer panduan={panduan} />}
       </div>
     </section>
   )
@@ -3067,6 +3088,7 @@ function MainApp() {
   const [profileNotice, setProfileNotice] = useState("")
   const [afterLogin, setAfterLogin] = useState<"home" | "registration">("home")
   const [notice, setNotice] = useState("")
+  const aktivasiDibuka = useRef(false)
 
   useEffect(() => {
     if (view !== "home") window.scrollTo({ top: 0 })
@@ -3085,6 +3107,13 @@ function MainApp() {
   useEffect(() => {
     if (user && view === "login") setView(isStaff(user) ? "admin" : afterLogin)
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user])
+
+  useEffect(() => {
+    if (!user || aktivasiDibuka.current) return
+    if (authCallback !== "signup" && authCallback !== "invite" && authCallback !== "magiclink" && authCallback !== "email") return
+    aktivasiDibuka.current = true
+    setView(isStaff(user) ? "admin" : "registration")
   }, [user])
 
   const openLogin = () => {

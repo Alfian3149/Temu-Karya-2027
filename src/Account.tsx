@@ -1,8 +1,10 @@
+import { PanduanTautan } from "@/GuideVideo"
 import { jemaatForMupel } from "@/jemaatData"
 import { MedicalTab, TravelTab } from "@/Logistics"
 import React, { useState, useEffect, useRef, useCallback } from "react"
 import logo from "@/imports/LOGO_TKSGPIB27__3_.png"
-import { authTanpaSesi, supabase } from "@/lib/supabase"
+import logoGpib from "@/imports/logo-gpib.png"
+import { authRedirectTo, authTanpaSesi, supabase } from "@/lib/supabase"
 
 const BC = "'Barlow Condensed', sans-serif"
 const BB = "'Barlow', sans-serif"
@@ -117,7 +119,7 @@ export async function createAccount(name: string, email: string, password: strin
   const { data, error } = await client.auth.signUp({
     email: mail,
     password,
-    options: { data: { nama: name.trim() } },
+    options: { data: { nama: name.trim() }, emailRedirectTo: authRedirectTo() },
   })
   if (error) {
     if (/already registered|already exists/i.test(error.message)) throw new Error("Email sudah terdaftar.")
@@ -171,7 +173,7 @@ export async function setUserPassword(id: string, password: string) {
   const { data: profil, error } = await supabase.from("profil").select("email").eq("id", id).maybeSingle()
   throwIf(error)
   if (!profil?.email) throw new Error("Akun tidak ditemukan.")
-  const { error: resetError } = await supabase.auth.resetPasswordForEmail(profil.email, { redirectTo: window.location.origin })
+  const { error: resetError } = await supabase.auth.resetPasswordForEmail(profil.email, { redirectTo: authRedirectTo() })
   throwIf(resetError)
   return `Tautan reset kata sandi dikirim ke ${profil.email}.`
 }
@@ -284,16 +286,18 @@ export function useAuth() {
     const { data, error } = await supabase.auth.signUp({
       email: mail,
       password,
-      options: { data: { nama: name.trim(), mupel: asal } },
+      options: { data: { nama: name.trim(), mupel: asal }, emailRedirectTo: authRedirectTo() },
     })
     if (error) {
       if (/already registered|already exists/i.test(error.message)) throw new Error("Email sudah terdaftar. Silakan masuk.")
       throw new Error(error.message)
     }
-    if (!data.session || !data.user) throw new Error("Akun dibuat. Periksa email untuk konfirmasi, lalu masuk.")
+    if (!data.user) throw new Error("Akun tidak terbuat. Coba lagi.")
+    if (!data.session) return "menunggu-aktivasi" as const
     const { error: profileError } = await supabase.from("profil").update({ nama: name.trim(), mupel: asal }).eq("id", data.user.id)
     if (profileError) throw new Error(profileError.message)
     setUser(await profilToUser(data.user.id))
+    return "masuk" as const
   }
 
   const updateProfile = async (input: ProfileInput) => {
@@ -311,7 +315,7 @@ export function useAuth() {
 
   const resetPassword = async (email: string) => {
     const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
-      redirectTo: window.location.origin,
+      redirectTo: authRedirectTo(),
     })
     if (error) throw new Error(error.message)
   }
@@ -1698,7 +1702,14 @@ export function LoginPage({
           }
         }
       } else if (mode === "signup") {
-        await auth.signup(name, email, password, mupel)
+        const hasil = await auth.signup(name, email, password, mupel)
+        if (hasil === "menunggu-aktivasi") {
+          setPassword("")
+          setConfirm("")
+          setMode("login")
+          setInfo("Akun dibuat. Buka tautan aktivasi di email. Setelah tautan dibuka, Anda langsung masuk.")
+          return
+        }
         onSuccess()
       } else {
         await auth.resetPassword(email)
@@ -1739,7 +1750,19 @@ export function LoginPage({
             alignItems: "flex-start",
           }}
         >
-          <img src={logo} alt="Logo TKS 2027 PKB GPIB" style={{ width: 120, height: 120, objectFit: "contain", marginBottom: 32 }} />
+          <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", marginBottom: 32 }}>
+            <img
+              src={logoGpib}
+              alt="Logo GPIB, Gereja Protestan di Indonesia bagian Barat"
+              style={{ width: 96, height: 96, objectFit: "contain", flexShrink: 0 }}
+            />
+            <div style={{ width: 1, height: 64, background: "rgba(255,255,255,0.28)", flexShrink: 0 }} />
+            <img
+              src={logo}
+              alt="Logo TKS2027PKBGPIB"
+              style={{ width: 96, height: 96, objectFit: "contain", flexShrink: 0 }}
+            />
+          </div>
           <div style={{ fontFamily: BC, fontWeight: 700, fontSize: 12, letterSpacing: 4, color: "rgba(255,255,255,0.7)", marginBottom: 14 }}>
             PORTAL PESERTA
           </div>
@@ -1751,6 +1774,7 @@ export function LoginPage({
           <p style={{ fontFamily: BB, fontSize: 16, lineHeight: 1.8, color: "rgba(255,255,255,0.85)", maxWidth: 420, margin: 0 }}>
             Masuk atau buat akun untuk mendaftarkan diri sebagai peserta, undangan, pendamping, atau KMJ pada Temu Karya Sinodal 2027.
           </p>
+          <PanduanTautan bagian="akun" tampilan="panel" />
         </div>
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "48px 24px" }}>
@@ -2084,6 +2108,8 @@ export function RegistrationPage({ user, onEditProfile }: { user: User; onEditPr
         {loadError && <Banner tone="error">{loadError}</Banner>}
         {loading && <p style={{ fontFamily: BB, fontSize: 14, color: "#aaa" }}>Memuat data kontingen…</p>}
 
+        {tab === "peserta" && <PanduanTautan bagian="peserta" />}
+
         <div className="reg-layout">
         <nav role="tablist" aria-orientation="vertical" className="reg-nav">
           {tabs.map(([k, label, n], i) => {
@@ -2297,9 +2323,10 @@ function RegistrationForm({
       <h1 style={{ fontFamily: BC, fontWeight: 800, fontSize: "clamp(36px,5vw,56px)", letterSpacing: 2, lineHeight: 1, color: "#fff", margin: "0 0 12px" }}>
         {existing ? "UBAH DATA PESERTA" : "TAMBAH PESERTA"}
       </h1>
-      <p style={{ fontFamily: BB, fontSize: 15, color: "#bbb", margin: "0 0 40px", lineHeight: 1.7 }}>
+      <p style={{ fontFamily: BB, fontSize: 15, color: "#bbb", margin: "0 0 20px", lineHeight: 1.7 }}>
         Didaftarkan oleh <strong style={{ color: "#fff" }}>{user.name}</strong> ({user.email}). Lengkapi seluruh kolom di bawah ini.
       </p>
+      <PanduanTautan bagian="peserta" />
 
       <form onSubmit={submit} noValidate style={{ background: "#2d2d2d", border: "1px solid #4a4a4a", padding: "36px clamp(20px,4vw,40px)" }}>
         {formError && <Banner tone="error">{formError}</Banner>}

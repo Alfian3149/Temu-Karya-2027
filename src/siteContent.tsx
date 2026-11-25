@@ -174,6 +174,7 @@ export type SiteValue = {
   gallery: GalleryIsi | null
   contact: ContactIsi | null
   footer: FooterIsi
+  ready: boolean
   reload: () => void
 }
 
@@ -185,9 +186,11 @@ function block<T>(state: PublicState, kunci: string): T | null {
 
 export function SiteProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<PublicState>(EMPTY)
+  const [ready, setReady] = useState(false)
   const reload = useCallback(() => {
     void loadPublic().then((next) => {
       if (next.fromDb) setState(next)
+      setReady(true)
     })
   }, [])
   useEffect(() => { reload() }, [reload])
@@ -216,9 +219,10 @@ export function SiteProvider({ children }: { children: React.ReactNode }) {
       gallery: block<GalleryIsi>(state, "gallery"),
       contact: block<ContactIsi>(state, "contact"),
       footer: block<FooterIsi>(state, "footer") ?? (cloneIsi(kontenDef("footer").isi) as FooterIsi),
+      ready,
       reload,
     }
-  }, [state, reload])
+  }, [state, ready, reload])
   return <SiteContext.Provider value={value}>{children}</SiteContext.Provider>
 }
 

@@ -122,44 +122,52 @@ function PlayMark() {
   )
 }
 
-export function PanduanPlayer({ panduan }: { panduan: Panduan }) {
+export function PanduanAksi({ panduan }: { panduan: Panduan }) {
   const [open, setOpen] = useState<null | "akun" | "peserta">(null)
   const choices = (["akun", "peserta"] as const).flatMap((id) => {
     const bab = panduan[id]
     return bab ? [{ id, label: bab.label }] : []
   })
-  const pertama = choices[0]
   const dipilih = open ? panduan[open] : null
   return (
-    <div style={{ marginTop: 48, background: "rgba(0,0,0,0.18)", display: "flex", alignItems: "center", gap: 28, flexWrap: "wrap", padding: "26px 28px" }}>
-      <button
-        type="button"
-        aria-label={`Putar ${panduan.judul}`}
-        onClick={() => pertama && setOpen(pertama.id)}
-        style={{ width: 72, height: 72, borderRadius: "50%", border: "1.5px solid #fff", background: "transparent", color: "#fff", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
-      >
-        <span aria-hidden style={{ width: 0, height: 0, borderTop: "10px solid transparent", borderBottom: "10px solid transparent", borderLeft: "16px solid #fff", marginLeft: 4 }} />
-      </button>
-      <div style={{ flex: "1 1 240px", minWidth: 0 }}>
-        <div style={{ fontFamily: BC, fontWeight: 700, fontSize: 12, letterSpacing: 3, color: "rgba(255,255,255,0.65)", marginBottom: 6 }}>
-          PANDUAN VIDEO
-        </div>
-        <div style={{ fontFamily: BC, fontWeight: 800, fontSize: 26, letterSpacing: 1.5, color: "#fff", lineHeight: 1 }}>
-          {panduan.judul}
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8, marginTop: 14 }}>
-          {choices.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => setOpen(item.id)}
-              style={{ fontFamily: BC, fontWeight: 700, fontSize: 14, letterSpacing: 1.2, color: "#fff", background: "none", border: "none", borderBottom: "1px solid rgba(255,255,255,0.45)", padding: "0 0 3px", cursor: "pointer" }}
-            >
-              {item.label.toUpperCase()}
-            </button>
-          ))}
-        </div>
-      </div>
+    <div role="group" aria-label={panduan.judul} style={{ display: "contents" }}>
+      {choices.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          className="reg-cta"
+          aria-label={`Putar ${item.label}`}
+          onClick={() => setOpen(item.id)}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 10,
+            fontFamily: BC,
+            fontWeight: 800,
+            fontSize: 15,
+            letterSpacing: 1.6,
+            color: "#fff",
+            background: "transparent",
+            border: "2px solid #fff",
+            padding: "16px 28px",
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+            transition: "background 0.2s, color 0.2s",
+          }}
+          onMouseEnter={(event) => {
+            event.currentTarget.style.background = "#fff"
+            event.currentTarget.style.color = O
+          }}
+          onMouseLeave={(event) => {
+            event.currentTarget.style.background = "transparent"
+            event.currentTarget.style.color = "#fff"
+          }}
+        >
+          <span aria-hidden style={{ width: 0, height: 0, borderTop: "6px solid transparent", borderBottom: "6px solid transparent", borderLeft: "10px solid currentColor", flex: "none" }} />
+          {item.label.toUpperCase()}
+        </button>
+      ))}
       {dipilih && <PanduanDialog title={dipilih.label.toUpperCase()} id={dipilih.id} onClose={() => setOpen(null)} />}
     </div>
   )

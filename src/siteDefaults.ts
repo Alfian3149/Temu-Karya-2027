@@ -17,11 +17,13 @@ export type HeroIsi = {
   baris1: string
   baris2: string
   tombol: string
+  tanggal: string
   hitung: string
   mulai: string
   videoAktif: boolean
   youtube: string
   tombolVideo: string
+  iklan: string
 }
 
 export type BackgroundIsi = {
@@ -161,11 +163,13 @@ const HERO: HeroIsi = {
   baris1: "TEMU KARYA SINODAL 2027",
   baris2: "PELKAT PKB GPIB",
   tombol: "DAFTAR SEKARANG",
+  tanggal: "7 – 11 Juli 2027",
   hitung: "MENGHITUNG MUNDUR",
   mulai: "2027-07-14T08:00:00+07:00",
   videoAktif: false,
   youtube: "",
   tombolVideo: "TONTON TEASER",
+  iklan: "https://youtu.be/qCxSJXF8ex4",
 }
 
 const BACKGROUND: BackgroundIsi = {
@@ -505,11 +509,13 @@ function parseHero(value: unknown): HeroIsi | null {
     baris1: text(value.baris1, HERO.baris1),
     baris2: text(value.baris2, HERO.baris2),
     tombol: text(value.tombol, HERO.tombol),
+    tanggal: text(value.tanggal, HERO.tanggal),
     hitung: text(value.hitung, HERO.hitung),
     mulai: text(value.mulai, HERO.mulai),
     videoAktif: flag(value.videoAktif, HERO.videoAktif),
     youtube: text(value.youtube, HERO.youtube),
     tombolVideo: text(value.tombolVideo, HERO.tombolVideo),
+    iklan: text(value.iklan, HERO.iklan),
   }
 }
 

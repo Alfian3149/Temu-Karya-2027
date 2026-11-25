@@ -12,13 +12,16 @@ import { AdminPanel } from "@/Admin"
 import { PublicPeserta, KARTU_PREFIX } from "@/PesertaPublic"
 import { SiteProvider, useSite, type NavItem } from "@/siteContent"
 import { authCallback, supabase } from "@/lib/supabase"
-import { PanduanPlayer, PANDUAN_FAQ } from "@/GuideVideo"
+import { PanduanAksi, PANDUAN_FAQ } from "@/GuideVideo"
 import { DEFAULT_RUNDOWN, galleryImageUrl, httpUrl, panduanFrom, youtubeId } from "@/siteDefaults"
 
 // ── Style tokens ───────────────────────────────────────────────────────────────
 const BC = "'Barlow Condensed', sans-serif"
 const BB = "'Barlow', sans-serif"
 const O = "#FF6D00"
+// hero-logo.png keeps its orange/grey line at 70% of the image height.
+const HERO_SPLIT = "70%"
+const HERO_BAND = `linear-gradient(to bottom, ${O} ${HERO_SPLIT}, #4D4D4D ${HERO_SPLIT})`
 const GALLERY_SHOTS: (string | null)[] = [image1 as string, null, image2 as string, null, null, null]
 
 // ── Countdown hook ─────────────────────────────────────────────────────────────
@@ -571,7 +574,6 @@ function Navbar({
   )
 }
 
-const IKLAN_YOUTUBE = "https://youtu.be/qCxSJXF8ex4"
 const IKLAN_KEY = "tks-iklan-terakhir"
 
 function hariIniJakarta() {
@@ -680,13 +682,16 @@ function IklanModal({ videoId, onClose }: { videoId: string; onClose: () => void
 }
 
 function IklanPembuka() {
-  const videoId = youtubeId(IKLAN_YOUTUBE)
-  const [open, setOpen] = useState(() => Boolean(videoId) && !sudahNontonIklanHariIni())
+  const site = useSite()
+  const videoId = youtubeId(site.hero?.iklan ?? "")
+  const [open, setOpen] = useState(false)
   const close = useMemo(() => () => setOpen(false), [])
 
   useEffect(() => {
-    if (open) catatIklanHariIni()
-  }, [open])
+    if (!site.ready || !videoId || sudahNontonIklanHariIni()) return
+    setOpen(true)
+    catatIklanHariIni()
+  }, [site.ready, videoId])
 
   if (!open || !videoId) return null
   return <IklanModal videoId={videoId} onClose={close} />
@@ -776,7 +781,7 @@ function Hero() {
         <div
           style={{
             flex: "0 0 58%",
-            background: `linear-gradient(to bottom, ${O} 70%, #4D4D4D 70%)`,
+            background: HERO_BAND,
             display: "flex",
             flexDirection: "column",
             overflow: "hidden",
@@ -787,7 +792,7 @@ function Hero() {
           <div
             className="hero-orange"
             style={{
-              height: "70%",
+              height: HERO_SPLIT,
               display: "flex",
               flexDirection: "column",
               justifyContent: "center",
@@ -901,82 +906,131 @@ function Hero() {
             )}
           </div>
 
-          {/* Grey zone: countdown */}
+          {/* Grey zone: event dates + countdown */}
           <div
             className="hero-grey"
             style={{
-              height: "30%",
+              height: `calc(100% - ${HERO_SPLIT})`,
               display: "flex",
               alignItems: "center",
               padding: "0 clamp(32px, 5vw, 72px)",
             }}
           >
-            <div className="hero-cd">
-              <div
-                style={{
-                  fontFamily: BC,
-                  fontWeight: 700,
-                  fontSize: 10,
-                  letterSpacing: 4,
-                  color: "rgba(255,255,255,0.45)",
-                  marginBottom: 12,
-                }}
-              >
-                {hero.hitung}
+            <div
+              className="hero-cd"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                width: "100%",
+                gap: "clamp(18px, 3vw, 48px)",
+              }}
+            >
+              <div className="hero-when">
+                <div
+                  style={{
+                    fontFamily: BC,
+                    fontWeight: 700,
+                    fontSize: 10,
+                    letterSpacing: 4,
+                    color: "rgba(255,255,255,0.55)",
+                    marginBottom: 6,
+                  }}
+                >
+                  TANGGAL KEGIATAN
+                </div>
+                <time
+                  className="hero-when-date"
+                  style={{
+                    display: "block",
+                    fontFamily: BC,
+                    fontWeight: 800,
+                    fontSize: "clamp(22px, 2.4vw, 40px)",
+                    letterSpacing: "0.04em",
+                    color: "#fff",
+                    lineHeight: 1.1,
+                    textTransform: "uppercase",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {hero.tanggal}
+                </time>
               </div>
-              <div className="hero-cd-row" style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
-                {[
-                  { val: days, label: "HARI" },
-                  { val: hours, label: "JAM" },
-                  { val: minutes, label: "MENIT" },
-                  { val: seconds, label: "DETIK" },
-                ].map(({ val, label }) => (
-                  <div key={label} className="hero-cd-tile" style={{ textAlign: "center" }}>
-                    <div
-                      style={{
-                        fontFamily: BC,
-                        fontWeight: 800,
-                        fontSize: "clamp(28px, 3.5vw, 52px)",
-                        color: "#fff",
-                        lineHeight: 1,
-                      }}
-                    >
-                      {String(val).padStart(2, "0")}
+              <div
+                className="hero-cd-rule"
+                aria-hidden="true"
+                style={{ width: 1, height: 62, flex: "none", background: "rgba(255,255,255,0.32)" }}
+              />
+              <div className="hero-count">
+                <div
+                  className="hero-cd-label"
+                  style={{
+                    fontFamily: BC,
+                    fontWeight: 700,
+                    fontSize: 10,
+                    letterSpacing: 4,
+                    color: "rgba(255,255,255,0.45)",
+                    marginBottom: 10,
+                  }}
+                >
+                  {hero.hitung}
+                </div>
+                <div className="hero-cd-row" style={{ display: "flex", gap: "clamp(12px, 1.6vw, 28px)", alignItems: "flex-start" }}>
+                  {[
+                    { val: days, label: "HARI" },
+                    { val: hours, label: "JAM" },
+                    { val: minutes, label: "MENIT" },
+                    { val: seconds, label: "DETIK" },
+                  ].map(({ val, label }) => (
+                    <div key={label} className="hero-cd-tile" style={{ textAlign: "center" }}>
+                      <div
+                        style={{
+                          fontFamily: BC,
+                          fontWeight: 800,
+                          fontSize: "clamp(26px, 3vw, 48px)",
+                          color: "#fff",
+                          lineHeight: 1,
+                        }}
+                      >
+                        {String(val).padStart(2, "0")}
+                      </div>
+                      <div
+                        style={{
+                          fontFamily: BC,
+                          fontWeight: 700,
+                          fontSize: 9,
+                          letterSpacing: 2,
+                          color: "rgba(255,255,255,0.4)",
+                          marginTop: 4,
+                        }}
+                      >
+                        {label}
+                      </div>
                     </div>
-                    <div
-                      style={{
-                        fontFamily: BC,
-                        fontWeight: 700,
-                        fontSize: 9,
-                        letterSpacing: 2,
-                        color: "rgba(255,255,255,0.4)",
-                        marginTop: 4,
-                      }}
-                    >
-                      {label}
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* RIGHT: logo panel — orange top mirrors left panel orange zone */}
+        {/* RIGHT: logo. Fit to the panel height so its 70% color line stays on the band. */}
         <div
-          style={{ flex: "0 0 42%", position: "relative", overflow: "hidden" }}
+          style={{ flex: "0 0 42%", position: "relative", overflow: "hidden", background: HERO_BAND }}
           className="hero-right hidden-mobile"
         >
           <img
+            className="hero-logo"
             src={heroImage}
             alt="TKS2027PKBGPIB emblem"
             style={{
               position: "absolute",
-              inset: 0,
-              width: "100%",
+              top: 0,
+              left: "50%",
               height: "100%",
-              objectFit: "cover",
-              objectPosition: "center top",
+              width: "auto",
+              maxWidth: "none",
+              transform: "translateX(-50%)",
             }}
           />
         </div>
@@ -1956,7 +2010,7 @@ function Information({
         {tab === "faq" && faq && (
           <div style={{ maxWidth: 800 }}>
             {(panduan && site.show("registration") && !faq.items.some((item) => item.q.trim().toLowerCase() === PANDUAN_FAQ.toLowerCase())
-              ? [...faq.items, { q: PANDUAN_FAQ, a: "Buat akun pada halaman masuk, lalu daftarkan peserta dari portal kontingen. Di bagian Registration ada dua video terpisah: cara membuat akun dan cara mendaftarkan peserta. Tautan video akun juga ada di halaman masuk. Tautan video peserta ada di halaman pendaftaran kontingen.", panduan: true }]
+              ? [...faq.items, { q: PANDUAN_FAQ, a: "Buat akun pada halaman masuk, lalu daftarkan peserta dari portal kontingen. Tombol videonya ada di samping tombol daftar pada bagian Registration. Tautan video akun juga ada di halaman masuk. Tautan video peserta ada di halaman pendaftaran kontingen.", panduan: true }]
               : faq.items
             ).map((item, i) => (
               <div
@@ -2219,11 +2273,15 @@ function Registration({
                 </div>
               ))}
             </div>
+            <div className="reg-actions" style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
             <button
               onClick={onRegister}
+              className="reg-cta"
               style={{
-                display: "inline-block",
-                border: "none",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                border: "2px solid #fff",
                 cursor: "pointer",
                 fontFamily: BC,
                 fontWeight: 800,
@@ -2231,8 +2289,9 @@ function Registration({
                 letterSpacing: 3,
                 color: O,
                 background: "#fff",
-                padding: "18px 44px",
+                padding: "16px 42px",
                 textDecoration: "none",
+                whiteSpace: "nowrap",
                 transition: "background 0.2s",
               }}
               onMouseEnter={(e) => {
@@ -2244,6 +2303,8 @@ function Registration({
             >
               {user ? "ISI FORMULIR PENDAFTARAN" : "LOGIN UNTUK MENDAFTAR"}
             </button>
+            {panduan && <PanduanAksi panduan={panduan} />}
+            </div>
           </div>
 
           <div>
@@ -2311,7 +2372,6 @@ function Registration({
             </div>
           </div>
         </div>
-        {panduan && <PanduanPlayer panduan={panduan} />}
       </div>
     </section>
   )
@@ -3168,23 +3228,27 @@ function MainApp() {
         @media (max-width: 768px) {
           .hidden-mobile { display: none !important; }
           .show-mobile { display: flex !important; }
-          .hero-split { flex-direction: column !important; }
-          .hero-split { min-height: 0 !important; }
-          .hero-left { flex: none !important; width: 100% !important; background: ${O} !important; }
-          .hero-orange { height: auto !important; justify-content: flex-start !important; align-items: center; text-align: center; padding: 64px 24px 44px !important; }
-          .hero-title { font-size: clamp(38px, 11vw, 56px) !important; letter-spacing: 0.06em !important; margin-bottom: 18px !important; }
-          .hero-orange > div:nth-of-type(1) { margin: 0 auto 20px !important; width: 56px !important; }
-          .hero-orange p { font-size: 15px !important; margin-bottom: 32px !important; }
-          .hero-actions { flex-direction: column !important; align-self: stretch !important; width: 100%; }
-          .hero-cta { align-self: stretch !important; text-align: center; padding: 16px 24px !important; }
-          .hero-grey { height: auto !important; background: #4D4D4D; padding: 32px 20px 40px !important; justify-content: center; }
-          .hero-cd { width: 100%; max-width: 420px; margin: 0 auto; }
-          .hero-cd > div:first-child { text-align: center; font-size: 11px !important; margin-bottom: 16px !important; }
+          .hero-split { flex-direction: column !important; height: calc(100dvh - 68px) !important; min-height: 0 !important; }
+          .hero-left { flex: none !important; width: 100% !important; height: 100% !important; background: ${O} !important; }
+          .hero-orange { height: auto !important; flex: 1 1 auto; min-height: 0; justify-content: center !important; align-items: center; text-align: center; padding: 16px 20px 12px !important; }
+          .hero-title { font-size: clamp(28px, 8vw, 42px) !important; letter-spacing: 0.06em !important; margin-bottom: 10px !important; }
+          .hero-orange > div:nth-of-type(1) { margin: 0 auto 10px !important; width: 48px !important; }
+          .hero-orange p { font-size: 13px !important; margin-bottom: 14px !important; }
+          .hero-actions { flex-direction: column !important; align-self: stretch !important; width: 100%; gap: 8px !important; }
+          .hero-cta { align-self: stretch !important; text-align: center; padding: 12px 16px !important; }
+          .hero-grey { height: auto !important; flex: 0 0 auto; background: #4D4D4D; padding: 12px 16px 16px !important; justify-content: center; }
+          .hero-cd { display: block !important; width: 100%; max-width: 420px; margin: 0 auto; gap: 0 !important; }
+          .hero-cd-rule { display: none !important; }
+          .hero-when { text-align: center; margin-bottom: 10px !important; }
+          .hero-when-date { font-size: 22px !important; }
+          .hero-cd-label { text-align: center; font-size: 11px !important; margin-bottom: 8px !important; }
           .hero-cd-row { display: grid !important; grid-template-columns: repeat(4, 1fr); gap: 8px !important; }
-          .hero-cd-tile { background: rgba(255,255,255,0.07); border-top: 3px solid ${O}; padding: 14px 4px 10px; }
-          .hero-cd-tile > div:first-child { font-size: 34px !important; }
-          .hero-cd-tile > div:last-child { font-size: 10px !important; margin-top: 6px !important; }
+          .hero-cd-tile { background: rgba(255,255,255,0.07); border-top: 3px solid ${O}; padding: 10px 4px 8px; }
+          .hero-cd-tile > div:first-child { font-size: 28px !important; }
+          .hero-cd-tile > div:last-child { font-size: 10px !important; margin-top: 4px !important; }
           .section-grid { grid-template-columns: 1fr !important; gap: 40px !important; }
+          .reg-actions { flex-direction: column !important; align-items: stretch !important; }
+          .reg-cta { width: 100% !important; box-sizing: border-box; }
           .program-grid { grid-template-columns: 1fr !important; }
           .gallery-mosaic:not(.gallery-one) { grid-template-columns: 1fr 1fr !important; grid-auto-rows: 160px !important; }
           .gallery-one { grid-template-columns: 1fr !important; grid-auto-rows: 240px !important; }

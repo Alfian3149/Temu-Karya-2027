@@ -116,6 +116,7 @@ function HeroForm({ value, onChange }: { value: HeroIsi; onChange: (value: HeroI
       <Field label="Baris keterangan 1"><TextInput value={value.baris1} onChange={(baris1) => onChange({ ...value, baris1 })} /></Field>
       <Field label="Baris keterangan 2"><TextInput value={value.baris2} onChange={(baris2) => onChange({ ...value, baris2 })} /></Field>
       <Field label="Teks tombol"><TextInput value={value.tombol} onChange={(tombol) => onChange({ ...value, tombol })} /></Field>
+      <Field label="Tanggal kegiatan" hint="Ditampilkan di atas hitung mundur, contoh 7 – 11 Juli 2027"><TextInput value={value.tanggal} onChange={(tanggal) => onChange({ ...value, tanggal })} /></Field>
       <Field label="Label hitung mundur"><TextInput value={value.hitung} onChange={(hitung) => onChange({ ...value, hitung })} /></Field>
       <Field label="Mulai hitung mundur" hint="Format ISO, contoh 2027-07-14T08:00:00+07:00"><TextInput value={value.mulai} onChange={(mulai) => onChange({ ...value, mulai })} /></Field>
       <Field label="Video teaser" hint="Tombol putar tampil di beranda bila video aktif dan tautan YouTube dikenali.">
@@ -124,6 +125,9 @@ function HeroForm({ value, onChange }: { value: HeroIsi; onChange: (value: HeroI
       <Field label="Teks tombol teaser"><TextInput value={value.tombolVideo} onChange={(tombolVideo) => onChange({ ...value, tombolVideo })} /></Field>
       <Field label="Tautan YouTube" hint={"Contoh https://www.youtube.com/watch?v=xxxxxxxxxxx atau https://youtu.be/xxxxxxxxxxx"} error={youtubeError}>
         <TextInput value={value.youtube} onChange={(youtube) => onChange({ ...value, youtube })} placeholder={"https://www.youtube.com/watch?v="} />
+      </Field>
+      <Field label="Tautan iklan" hint="Popup saat pengunjung membuka situs, sekali sehari. Kosongkan agar popup tidak muncul." error={value.iklan.trim() && !youtubeId(value.iklan) ? "Tautan ini belum dikenali sebagai video YouTube." : undefined}>
+        <TextInput value={value.iklan} onChange={(iklan) => onChange({ ...value, iklan })} placeholder="https://youtu.be/" />
       </Field>
     </>
   )
@@ -363,15 +367,15 @@ function RegistrationForm({ value, onChange }: { value: RegistrationIsi; onChang
         ))}
         <button type="button" style={ghost} onClick={() => onChange({ ...value, langkah: [...value.langkah, { step: "", title: "", desc: "" }] })}>TAMBAH LANGKAH</button>
       </Field>
-      <Field label="Video panduan" hint="Dua video terpisah. Tautan akun tampil di halaman masuk, tautan peserta tampil di halaman pendaftaran kontingen, dan keduanya tampil di bagian Registration." error={kosong ? "Isi minimal satu tautan YouTube agar panduan tampil." : undefined}>
+      <Field label="Video panduan" hint="Dua video terpisah. Tombolnya tampil di samping tombol daftar pada bagian Registration. Tautan akun tetap di halaman masuk, tautan peserta tetap di halaman pendaftaran kontingen." error={kosong ? "Isi minimal satu tautan YouTube agar panduan tampil." : undefined}>
         <Switch on={value.panduanAktif} label={value.panduanAktif ? "AKTIF" : "NONAKTIF"} onChange={(panduanAktif) => onChange({ ...value, panduanAktif })} />
       </Field>
       <Field label="Judul panduan"><TextInput value={value.panduanJudul} onChange={(panduanJudul) => onChange({ ...value, panduanJudul })} /></Field>
-      <Field label="Label video akun" hint="Teks tautan di halaman masuk."><TextInput value={value.panduanAkunLabel} onChange={(panduanAkunLabel) => onChange({ ...value, panduanAkunLabel })} /></Field>
+      <Field label="Label video akun" hint="Teks tombol di bagian Registration dan tautan di halaman masuk."><TextInput value={value.panduanAkunLabel} onChange={(panduanAkunLabel) => onChange({ ...value, panduanAkunLabel })} /></Field>
       <Field label="Tautan YouTube akun" hint="Contoh https://www.youtube.com/watch?v=xxxxxxxxxxx atau https://youtu.be/xxxxxxxxxxx" error={youtubeError(value.panduanAkunYoutube)}>
         <TextInput value={value.panduanAkunYoutube} onChange={(panduanAkunYoutube) => onChange({ ...value, panduanAkunYoutube })} placeholder="https://www.youtube.com/watch?v=" />
       </Field>
-      <Field label="Label video peserta" hint="Teks tautan di halaman pendaftaran kontingen."><TextInput value={value.panduanPesertaLabel} onChange={(panduanPesertaLabel) => onChange({ ...value, panduanPesertaLabel })} /></Field>
+      <Field label="Label video peserta" hint="Teks tombol di bagian Registration dan tautan di halaman pendaftaran kontingen."><TextInput value={value.panduanPesertaLabel} onChange={(panduanPesertaLabel) => onChange({ ...value, panduanPesertaLabel })} /></Field>
       <Field label="Tautan YouTube peserta" hint="Video utuh, terpisah dari video cara membuat akun." error={youtubeError(value.panduanPesertaYoutube)}>
         <TextInput value={value.panduanPesertaYoutube} onChange={(panduanPesertaYoutube) => onChange({ ...value, panduanPesertaYoutube })} placeholder="https://www.youtube.com/watch?v=" />
       </Field>
